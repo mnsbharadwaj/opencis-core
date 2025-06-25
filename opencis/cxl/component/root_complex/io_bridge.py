@@ -17,7 +17,7 @@ from opencis.util.pci import (
     extract_device_from_bdf,
     bdf_to_string,
 )
-from opencis.cxl.transport.transaction import (
+from opencis.cxl.transport.cxl_io_packets import (
     CxlIoCfgRdPacket,
     CxlIoCfgWrPacket,
     CxlIoCompletionPacket,
@@ -136,7 +136,6 @@ class IoBridge(RunnableComponent):
         bit_offset = (offset % 4) * 8
 
         tpl_type_str = "CFG RD0" if is_type0 else "CFG RD1"
-
         if not is_cxl_io_completion_status_sc(packet):
             cpl_packet = cast(CxlIoCompletionPacket, packet)
             logger.debug(
@@ -148,7 +147,7 @@ class IoBridge(RunnableComponent):
             return 0xFFFFFFFF & bit_mask
 
         cpld_packet = cast(CxlIoCompletionWithDataPacket, packet)
-        data = (cpld_packet.data >> bit_offset) & bit_mask
+        data = (cpld_packet.get_data_as_int() >> bit_offset) & bit_mask
 
         logger.debug(
             self._create_message(
@@ -178,7 +177,7 @@ class IoBridge(RunnableComponent):
             return None
 
         cpld_packet = cast(CxlIoCompletionWithDataPacket, packet)
-        return cpld_packet.data
+        return cpld_packet.get_data_as_int()
 
     # pylint: enable=duplicate-code
 

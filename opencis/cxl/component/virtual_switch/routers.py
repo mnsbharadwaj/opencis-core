@@ -18,25 +18,29 @@ from opencis.cxl.component.cxl_connection import FifoPair
 from opencis.cxl.component.virtual_switch.routing_table import RoutingTable
 from opencis.cxl.component.virtual_switch.port_binder import PortBinder, BindSlot
 from opencis.cxl.component.virtual_switch.upstream_vppb import UpstreamVppb
-from opencis.cxl.transport.transaction import (
-    BasePacket,
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.cxl_mem_packets import (
+    CxlMemBasePacket,
+    CxlMemM2SReqPacket,
+    CxlMemM2SRwDPacket,
+    CxlMemM2SBIRspPacket,
+    CxlMemS2MBISnpPacket,
+)
+from opencis.cxl.transport.cxl_cache_packets import (
+    CxlCacheBasePacket,
     CxlCacheD2HReqPacket,
+    CxlCacheH2DRspPacket,
+    CxlCacheH2DReqPacket,
     CxlCacheH2DDataPacket,
+)
+from opencis.cxl.transport.packet_constants import CXL_IO_CPL_STATUS
+from opencis.cxl.transport.cxl_io_packets import (
     CxlIoBasePacket,
     CxlIoCfgRdPacket,
     CxlIoCfgWrPacket,
     CxlIoCompletionPacket,
     CxlIoMemReqPacket,
     CxlIoCompletionWithDataPacket,
-    CXL_IO_CPL_STATUS,
-    CxlMemBasePacket,
-    CxlMemM2SReqPacket,
-    CxlMemM2SRwDPacket,
-    CxlMemM2SBIRspPacket,
-    CxlMemS2MBISnpPacket,
-    CxlCacheBasePacket,
-    CxlCacheH2DRspPacket,
-    CxlCacheH2DReqPacket,
 )
 
 

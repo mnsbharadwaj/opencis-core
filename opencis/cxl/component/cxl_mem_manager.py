@@ -9,8 +9,8 @@ from typing import Optional, cast
 
 from opencis.util.logger import logger
 from opencis.pci.component.fifo_pair import FifoPair
-from opencis.cxl.transport.transaction import (
-    BasePacket,
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.cxl_mem_packets import (
     CxlMemBasePacket,
     CxlMemM2SBIRspPacket,
     CxlMemM2SReqPacket,
@@ -69,7 +69,7 @@ class CxlMemManager(PacketProcessor):
             raise Exception("CxlMemoryDeviceComponent isn't set yet")
 
         addr = mem_wr_packet.get_address()
-        data = mem_wr_packet.data
+        data = mem_wr_packet.get_data_as_int()
         ld_id = mem_wr_packet.m2srwd_header.ld_id
         logger.debug(
             self._create_message(

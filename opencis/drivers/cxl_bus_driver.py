@@ -241,7 +241,6 @@ class CxlDeviceInfo:
         hdm_decoder = self.get_cachemem_register_by_id(
             CXL_CACHEMEM_REGISTER_CAPABILITY_ID.CXL_HDM_DECODER
         )
-
         if not hdm_decoder:
             logger.warning(f"{self._get_prefix()} HDM Decoder Register not found")
             return False

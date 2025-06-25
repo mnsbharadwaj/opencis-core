@@ -6,13 +6,13 @@ See LICENSE for details.
 """
 
 from asyncio import create_task, gather
-from typing import Optional, cast, List
+from typing import Optional, cast
 from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE
 from opencis.util.component import RunnableComponent
 from opencis.util.logger import logger
 from opencis.pci.component.fifo_pair import FifoPair
 from opencis.cxl.device.cxl_type3_device import CXL_T3_DEV_TYPE
-from opencis.cxl.transport.transaction import (
+from opencis.cxl.transport.cci_packets import (
     CciRequestPacket,
     GetLdInfoRequestPacket,
     GetLdInfoResponsePacket,
@@ -45,7 +45,7 @@ class FMLD(RunnableComponent):
         # ld_id of 0 has 256M of memory
         # ld_id of 1 has 768M of memory
         # ld_id of 2 has 512M of memory
-        self._ld_dict = {i: 1 for i in range(ld_count)}
+        self._ld_allocations = {i: 1 for i in range(ld_count)}
 
     async def _process_get_ld_info_packet(self, get_ld_info_request_packet: CciRequestPacket):
         if get_ld_info_request_packet.get_command_opcode() != CCI_FM_API_COMMAND_OPCODE.GET_LD_INFO:
@@ -57,30 +57,25 @@ class FMLD(RunnableComponent):
         get_ld_info_response_packet = GetLdInfoResponsePacket.create(
             memory_size=memory_size,
             ld_count=self._ld_count,
-            message_tag=get_ld_info_request_packet.header_data.message_tag,
+            message_tag=get_ld_info_request_packet.cci_msg_header.message_tag,
         )
-        logger.info(f"Get LD Info Response: {get_ld_info_response_packet}")
         await self.upstream_fifo.target_to_host.put(get_ld_info_response_packet)
         logger.info("Get LD Info Response sent done")
 
     async def _process_get_ld_allocations_packet(
-        self, get_ld_allocations_packet: GetLdAllocationsRequestPacket
+        self, request_packet: GetLdAllocationsRequestPacket
     ):
-        if (
-            get_ld_allocations_packet.get_command_opcode()
-            != CCI_FM_API_COMMAND_OPCODE.GET_LD_ALLOCATIONS
-        ):
+        if request_packet.get_command_opcode() != CCI_FM_API_COMMAND_OPCODE.GET_LD_ALLOCATIONS:
             raise Exception("Invalid command opcode")
-        logger.info(f"Get LD Allocations: {get_ld_allocations_packet}")
+        logger.info(f"FMLD Get LD Allocations: {bytes(request_packet)}")
+        start_ld_id = request_packet.payload.start_ld_id
+        ld_alloc_list_limit = request_packet.payload.ld_allocation_list_limit
 
-        start_ld_id = get_ld_allocations_packet.get_start_ld_id()
-        ld_alloc_list_limit = get_ld_allocations_packet.get_ld_allocation_list_limit()
-
-        if start_ld_id < 0 or start_ld_id >= len(self._ld_dict):
+        if start_ld_id < 0 or start_ld_id >= len(self._ld_allocations):
             raise Exception("Invalid start_ld_id")
 
-        # Number of keys for self._allocated_ld_dict
-        max_len_ld_list = len(self._ld_dict) - start_ld_id
+        # Number of keys for self._ld_allocations
+        max_len_ld_list = len(self._ld_allocations) - start_ld_id
         if ld_alloc_list_limit < max_len_ld_list:
             ld_length = ld_alloc_list_limit
         else:
@@ -89,93 +84,47 @@ class FMLD(RunnableComponent):
         # Calculate number of lds
         number_of_lds = 0
         for i in range(max_len_ld_list):
-            if self._ld_dict.get(start_ld_id + i) == 1:
+            if self._ld_allocations.get(start_ld_id + i) == 1:
                 number_of_lds += 1
-
-        # Create allocated_ld list
-        allocated_ld: List[int] = []
-        allocated_ld_length = 0
-        for i in range(ld_length):
-            if self._ld_dict.get(start_ld_id + i) == 1:
-                # Range 1 Allocation Multiplier: Hardcoded right now to always return 256M
-                allocated_ld.append(1)
-                # Range 2 Allocation Multiplier: Fixed to 0
-                allocated_ld.append(0)
-                allocated_ld_length += 1
-            elif self._ld_dict.get(start_ld_id + i) == 0:
-                break
-
-        allocated_ld_bytes = b"".join(num.to_bytes(8, "little") for num in allocated_ld)
 
         get_ld_allocations_response_packet = GetLdAllocationsResponsePacket.create(
             number_of_lds=number_of_lds,
             memory_granularity=0,
             start_ld_id=start_ld_id,
-            ld_allocation_list_length=allocated_ld_length,
-            ld_allocation_list=int.from_bytes(allocated_ld_bytes, "little"),
-            message_tag=get_ld_allocations_packet.header_data.message_tag,
+            ld_length=ld_length,
+            ld_allocations=self._ld_allocations,
+            message_tag=request_packet.cci_msg_header.message_tag,
         )
 
         await self.upstream_fifo.target_to_host.put(get_ld_allocations_response_packet)
         logger.info("Get LD Allocations Response sent done")
 
     async def _process_set_ld_allocations_packet(
-        self, set_ld_allocations_packet: SetLdAllocationsRequestPacket
+        self, request_packet: SetLdAllocationsRequestPacket
     ):
-        if (
-            set_ld_allocations_packet.get_command_opcode()
-            != CCI_FM_API_COMMAND_OPCODE.SET_LD_ALLOCATIONS
-        ):
+        if request_packet.get_command_opcode() != CCI_FM_API_COMMAND_OPCODE.SET_LD_ALLOCATIONS:
             raise Exception("Invalid command opcode")
-        logger.info(f"Set LD Allocations: {set_ld_allocations_packet}")
+        logger.info(f"Set LD Allocations: {request_packet}")
 
-        number_of_lds = set_ld_allocations_packet.get_number_of_lds()
-        start_ld_id = set_ld_allocations_packet.get_start_ld_id()
+        LD_ALLOCATIONS_SIZE = 16
+        number_of_lds = request_packet.payload.number_of_lds
+        start_ld_id = request_packet.payload.start_ld_id
+        ld_allocation_list_bytes = request_packet.payload.ld_allocation_list
 
-        ld_allocation_list = set_ld_allocations_packet.get_ld_allocation_list()
-
-        ld_allocation_list = [
-            int.from_bytes(ld_allocation_list[i : i + 8], "little")
-            for i in range(0, len(ld_allocation_list), 8)
-        ]
-
-        # Boundary check
-        number_of_lds = min(number_of_lds, len(self._ld_dict) - start_ld_id)
-
-        response_number_of_lds = 0
-        response_ld_allocated_list = []
-
-        ld_allocation_list = ld_allocation_list[::2]
-
-        # Create ld_allocation_list
+        # Update LD allocations
+        number_of_lds = min(number_of_lds, len(self._ld_allocations) - start_ld_id)
         for i in range(number_of_lds):
-            if self._ld_dict.get(start_ld_id + i) >= ld_allocation_list[i]:
-                response_ld_allocated_list.append(ld_allocation_list[i])
-                self._ld_dict[start_ld_id + i] = (
-                    self._ld_dict[start_ld_id + i] - ld_allocation_list[i]
-                )
-                response_number_of_lds += 1
-            elif self._ld_dict.get(start_ld_id + i) == 0:
-                response_ld_allocated_list.append(0)
-            elif self._ld_dict.get(start_ld_id + i) < ld_allocation_list[i]:
-                response_ld_allocated_list.append(self._ld_dict.get(start_ld_id + i))
-                self._ld_dict[start_ld_id + i] = 0
-                response_number_of_lds += 1
+            ld_id = start_ld_id + i
+            multiplier = ld_allocation_list_bytes[i * LD_ALLOCATIONS_SIZE]
+            self._ld_allocations[ld_id] = multiplier
 
-        response_ld_allocated_list = [1, 0] * len(response_ld_allocated_list)
-
-        response_ld_allocated_bytes = b"".join(
-            num.to_bytes(8, "little") for num in response_ld_allocated_list
-        )
-        ld_allocation_list = int.from_bytes(response_ld_allocated_bytes, "little")
-
-        set_ld_allocations_response_packet = SetLdAllocationsResponsePacket.create(
-            number_of_lds=response_number_of_lds,
+        response_packet = SetLdAllocationsResponsePacket.create(
+            number_of_lds=number_of_lds,
             start_ld_id=start_ld_id,
-            ld_allocation_list=ld_allocation_list,
-            message_tag=set_ld_allocations_packet.header_data.message_tag,
+            ld_allocations=self._ld_allocations,
+            message_tag=request_packet.cci_msg_header.message_tag,
         )
-        await self.upstream_fifo.target_to_host.put(set_ld_allocations_response_packet)
+        await self.upstream_fifo.target_to_host.put(response_packet)
         logger.info("Set LD Allocations Response sent done")
 
     async def _process_fm_to_target(self):

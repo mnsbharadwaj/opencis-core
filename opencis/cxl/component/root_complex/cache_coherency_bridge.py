@@ -26,8 +26,8 @@ from opencis.cxl.transport.cache_fifo import (
     CacheResponse,
     CACHE_RESPONSE_STATUS,
 )
-from opencis.cxl.transport.transaction import (
-    BasePacket,
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.cxl_cache_packets import (
     CxlCacheBasePacket,
     CxlCacheD2HReqPacket,
     CxlCacheD2HRspPacket,
@@ -35,6 +35,8 @@ from opencis.cxl.transport.transaction import (
     CxlCacheCacheH2DReqPacket,
     CxlCacheCacheH2DRspPacket,
     CxlCacheCacheH2DDataPacket,
+)
+from opencis.cxl.transport.packet_constants import (
     CXL_CACHE_H2DREQ_OPCODE,
     CXL_CACHE_H2DRSP_OPCODE,
     CXL_CACHE_H2DRSP_CACHE_STATE,
@@ -225,7 +227,9 @@ class CacheCoherencyBridge(RunnableComponent):
                     return
                 packet = await self._cxl_channel.d2h_data.get()
                 addr = self._cur_state.packet.get_address()
-                mem_packet = MemoryRequest(MEMORY_REQUEST_TYPE.WRITE, addr, 64, packet.data)
+                mem_packet = MemoryRequest(
+                    MEMORY_REQUEST_TYPE.WRITE, addr, 64, packet.get_data_as_int()
+                )
                 await self._memory_producer_fifos.request.put(mem_packet)
                 sf_update_list.append(SF_UPDATE_TYPE.SF_DEVICE_OUT)
                 self._cur_state.state = COH_STATE_MACHINE.COH_STATE_INIT
@@ -384,7 +388,7 @@ class CacheCoherencyBridge(RunnableComponent):
                 if self._cxl_channel.d2h_data.empty():
                     return
                 packet = await self._cxl_channel.d2h_data.get()
-                data = packet.data
+                data = packet.get_data_as_int()
             else:  # Unsupported for now
                 assert 0
             cache_packet = CacheResponse(self._cur_state.cache_rsp, data)

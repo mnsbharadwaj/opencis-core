@@ -32,24 +32,26 @@ from opencis.util.pci import (
     bdf_to_string,
     generate_bdfs_for_bus,
 )
-from opencis.cxl.transport.transaction import (
-    CXL_MEM_M2SBIRSP_OPCODE,
-    BasePacket,
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.cxl_io_packets import (
     CxlIoCfgRdPacket,
     CxlIoCfgWrPacket,
     CxlIoCompletionPacket,
     CxlIoCompletionWithDataPacket,
     CxlIoMemRdPacket,
     CxlIoMemWrPacket,
+    is_cxl_io_completion_status_sc,
+    is_cxl_io_completion_status_ur,
+)
+from opencis.cxl.transport.cxl_mem_packets import (
     CxlMemBIRspPacket,
     CxlMemMemWrPacket,
     CxlMemMemRdPacket,
     CxlMemMemDataPacket,
-    is_cxl_io_completion_status_sc,
-    is_cxl_io_completion_status_ur,
     is_cxl_mem_data,
     is_cxl_mem_completion,
 )
+from opencis.cxl.transport.packet_constants import CXL_MEM_M2SBIRSP_OPCODE
 
 BRIDGE_CLASS = PCI_CLASS.BRIDGE << 8 | PCI_BRIDGE_SUBCLASS.PCI_BRIDGE
 
@@ -286,7 +288,7 @@ class CxlRootPortDevice(RunnableComponent):
             return 0xFFFFFFFF & bit_mask
 
         cpld_packet = cast(CxlIoCompletionWithDataPacket, packet)
-        data = (cpld_packet.data >> bit_offset) & bit_mask
+        data = (cpld_packet.get_data_as_int() >> bit_offset) & bit_mask
 
         logger.debug(
             self._create_message(
@@ -317,7 +319,7 @@ class CxlRootPortDevice(RunnableComponent):
         packet = await self._downstream_connection.mmio_fifo.target_to_host.get()
         assert is_cxl_io_completion_status_sc(packet)
         cpld_packet = cast(CxlIoCompletionWithDataPacket, packet)
-        return cpld_packet.data
+        return cpld_packet.get_data_as_int()
 
     async def cxl_mem_read(self, address: int) -> int:
         logger.info(self._create_message(f"CXL.mem Read: HPA addr:0x{address:08x}"))
@@ -328,7 +330,7 @@ class CxlRootPortDevice(RunnableComponent):
                 packet = await self._downstream_connection.cxl_mem_fifo.target_to_host.get()
             assert is_cxl_mem_data(packet)
             mem_data_packet = cast(CxlMemMemDataPacket, packet)
-            return mem_data_packet.data
+            return mem_data_packet.get_data_as_int()
         except asyncio.exceptions.TimeoutError:
             logger.error(self._create_message("CXL.mem Read: Timed-out"))
             return None

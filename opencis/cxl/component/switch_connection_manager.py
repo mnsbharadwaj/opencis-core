@@ -13,13 +13,11 @@ from typing import Optional, List, Callable, Coroutine, Any, cast
 import traceback
 
 from opencis.cxl.component.cxl_connection import CxlConnection
-from opencis.cxl.transport.transaction import (
-    BasePacket,
-    SidebandConnectionRequestPacket,
-    BaseSidebandPacket,
-    PAYLOAD_TYPE,
+from opencis.cxl.transport.packet_constants import (
+    SYSTEM_PAYLOAD_TYPE,
     SIDEBAND_TYPES,
 )
+from opencis.cxl.transport.sideband_packets import BaseSidebandPacket
 from opencis.cxl.component.packet_reader import PacketReader
 from opencis.cxl.component.cxl_packet_processor import CxlPacketProcessor
 from opencis.cxl.component.cxl_component import (
@@ -122,24 +120,22 @@ class SwitchConnectionManager(RunnableComponent):
 
         packet_reader = PacketReader(reader, "SwitchConnectionManager")
         packet = await packet_reader.get_packet()
-        base_packet = cast(BasePacket, packet)
-
         logger.debug(self._create_message("Received a packet"))
-        if base_packet.system_header.payload_type != PAYLOAD_TYPE.SIDEBAND:
+        if packet.system_header.payload_type != SYSTEM_PAYLOAD_TYPE.SIDEBAND:
             message = "Handshake Error"
             logger.debug(self._create_message(message))
-            logger.debug(self._create_message(base_packet.get_pretty_string()))
+            logger.debug(self._create_message(packet.get_pretty_string()))
             raise Exception(message)
 
         base_sideband_packet = cast(BaseSidebandPacket, packet)
         if base_sideband_packet.sideband_header.type != SIDEBAND_TYPES.CONNECTION_REQUEST:
             message = "Handshake Error"
             logger.debug(self._create_message(message))
-            logger.debug(self._create_message(base_packet.get_pretty_string()))
+            logger.debug(self._create_message(packet.get_pretty_string()))
             raise Exception(message)
 
-        connection_request = cast(SidebandConnectionRequestPacket, packet)
-        port_index = connection_request.port
+        connection_request = packet
+        port_index = connection_request.get_data_as_int()
 
         # TODO: CE-32, ensure incoming device is connected to a correct port.
         logger.debug(

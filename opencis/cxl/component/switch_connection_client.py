@@ -10,12 +10,12 @@ from typing import cast, Tuple, Optional
 from enum import Enum, auto
 
 from opencis.util.logger import logger
-from opencis.cxl.transport.transaction import (
-    SIDEBAND_TYPES,
-    SidebandConnectionRequestPacket,
+from opencis.cxl.transport.packet_constants import SIDEBAND_TYPES
+from opencis.cxl.transport.sideband_packets import (
     BaseSidebandPacket,
-    CxlIoCfgRdPacket,
+    SidebandConnectionRequestPacket,
 )
+from opencis.cxl.transport.cxl_io_packets import CxlIoCfgRdPacket
 from opencis.cxl.component.common import CXL_COMPONENT_TYPE
 from opencis.cxl.component.packet_reader import PacketReader
 from opencis.cxl.component.cxl_connection import CxlConnection

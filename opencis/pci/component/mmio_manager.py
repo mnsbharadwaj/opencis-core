@@ -15,10 +15,9 @@ from opencis.util.number import round_up_to_power_of_2, tlptoh16
 from opencis.pci.component.fifo_pair import FifoPair
 from opencis.pci.component.packet_processor import PacketProcessor
 
-from opencis.cxl.transport.transaction import (
-    BasePacket,
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.cxl_io_packets import (
     CxlIoBasePacket,
-    CxlIoMemWrPacket,
     CxlIoMemReqPacket,
     CxlIoCompletionPacket,
     CxlIoCompletionWithDataPacket,
@@ -196,7 +195,8 @@ class MmioManager(PacketProcessor):
         start_offset = offset
         end_offset = offset + size - 1
         if mem_req_packet.is_mem_write():
-            data = cast(CxlIoMemWrPacket, mem_req_packet).data
+            data = mem_req_packet.get_data_as_int()
+
             logger.debug(self._create_message(f"WR: 0x{address:x}[{size}]=0x{data:08x}"))
             register.write_bytes(start_offset, end_offset, data)
         elif mem_req_packet.is_mem_read():

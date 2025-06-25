@@ -12,13 +12,15 @@ from opencis.pci.component.fifo_pair import FifoPair
 from opencis.pci.config_space.pci import REG_ADDR
 from opencis.util.unaligned_bit_structure import BitMaskedBitStructure
 from opencis.util.number import tlptoh16
-from opencis.cxl.transport.transaction import (
+from opencis.cxl.transport.cxl_io_packets import (
     CxlIoBasePacket,
     CxlIoCfgRdPacket,
     CxlIoCfgWrPacket,
     CxlIoCfgReqPacket,
     CxlIoCompletionPacket,
     CxlIoCompletionWithDataPacket,
+)
+from opencis.cxl.transport.packet_constants import (
     CXL_IO_FMT_TYPE,
     CXL_IO_CPL_STATUS,
 )
@@ -102,7 +104,6 @@ class ConfigSpaceManager(RunnableComponent):
             return
 
         cfg_addr, size = cfg_rd_packet.get_cfg_addr_read_info()
-
         # TODO: Fix OOB
 
         logger.debug(
@@ -111,7 +112,7 @@ class ConfigSpaceManager(RunnableComponent):
             )
         )
         value = self._register.read_bytes(cfg_addr, cfg_addr + size - 1)
-
+        logger.debug(self._create_message(f"[RD] value: 0x{value:x}"))
         cpl_packet = CxlIoCompletionWithDataPacket.create(
             req_id=req_id, tag=tag, cpl_id=dest_id, data=value, ld_id=ld_id
         )
@@ -143,9 +144,9 @@ class ConfigSpaceManager(RunnableComponent):
         logger.debug(
             self._create_message(
                 f"[WR] Config Space - ADDR: 0x{cfg_addr:04x}, "
-                + "SIZE: {size}, "
-                + "VALUE: 0x{value:08x}, "
-                + "LD_ID: {ld_id}"
+                + f"SIZE: {size}, "
+                + f"VALUE: 0x{value:08x}, "
+                + f"LD_ID: {ld_id}"
             )
         )
         self._register.write_bytes(cfg_addr, cfg_addr + size - 1, value)

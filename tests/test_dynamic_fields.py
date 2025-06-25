@@ -12,10 +12,7 @@ from opencis.util.unaligned_bit_structure import (
     ByteField,
     DynamicByteField,
 )
-
-from opencis.cxl.transport.transaction import (
-    CxlIoMemWrPacket,
-)
+from opencis.cxl.transport.cxl_io_packets import CxlIoMemWrPacket
 
 
 class DynamicByteStructure(UnalignedBitStructure):
@@ -102,4 +99,4 @@ def test_io_mem_wr():
     addr = 0x0
     data = 0xDEADBEEF
     packet = CxlIoMemWrPacket.create(addr, 4, data=data)
-    assert packet.data == data
+    assert packet.get_data_as_int() == data

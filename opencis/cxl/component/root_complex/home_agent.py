@@ -10,7 +10,6 @@ from asyncio import create_task, gather, sleep, Queue
 import asyncio
 from typing import cast
 
-from opencis.cxl.transport.common import BasePacket
 from opencis.util.logger import logger
 from opencis.util.component import RunnableComponent
 from opencis.pci.component.fifo_pair import FifoPair
@@ -28,7 +27,8 @@ from opencis.cxl.transport.cache_fifo import (
     CacheResponse,
     CACHE_RESPONSE_STATUS,
 )
-from opencis.cxl.transport.transaction import (
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.cxl_mem_packets import (
     CxlMemBasePacket,
     CxlMemMemDataPacket,
     CxlMemMemRdPacket,
@@ -233,7 +233,7 @@ class HomeAgent(RunnableComponent):
                 await asyncio.sleep(0)  # just spin
             cxl_packet = await self._cxl_channel.s2m_drs.get()
             assert cast(CxlMemBasePacket, cxl_packet).is_s2mdrs()
-            cache_packet = CacheResponse(status, cxl_packet.data)
+            cache_packet = CacheResponse(status, cxl_packet.get_data_as_int())
         else:
             cache_packet = CacheResponse(status)
         await self._upstream_cache_to_home_agent_fifos.response.put(cache_packet)
@@ -244,7 +244,7 @@ class HomeAgent(RunnableComponent):
     async def _process_cxl_s2m_drs_packet(self, s2mdrs_packet: CxlMemS2MDRSPacket):
         assert s2mdrs_packet.s2mdrs_header.opcode == CXL_MEM_S2MDRS_OPCODE.MEM_DATA
 
-        cache_packet = CacheResponse(CACHE_RESPONSE_STATUS.OK, s2mdrs_packet.data)
+        cache_packet = CacheResponse(CACHE_RESPONSE_STATUS.OK, s2mdrs_packet.get_data_as_int())
         await self._upstream_cache_to_home_agent_fifos.response.put(cache_packet)
         self._cur_state.state = COH_STATE_MACHINE.COH_STATE_INIT
 

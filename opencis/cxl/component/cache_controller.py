@@ -440,7 +440,6 @@ class CacheController(RunnableComponent):
                     self._create_message("Stop processing processor request scheduler fifo")
                 )
                 break
-
             match packet.type:
                 case MEMORY_REQUEST_TYPE.READ:
                     data = await self.cache_coherent_load(packet.addr, packet.size)

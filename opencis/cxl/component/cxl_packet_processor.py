@@ -16,21 +16,24 @@ from dataclasses import dataclass
 from enum import StrEnum, IntEnum
 from typing import cast, Optional, Dict, Union, List
 
-from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE
 from opencis.util.logger import logger
+from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE
 from opencis.util.component import RunnableComponent
 from opencis.cxl.component.common import CXL_COMPONENT_TYPE
 from opencis.cxl.component.cxl_connection import CxlConnection
 from opencis.cxl.component.packet_reader import PacketReader
-from opencis.cxl.transport.transaction import (
-    BasePacket,
-    BaseSidebandPacket,
-    CxlIoBasePacket,
-    CxlMemBasePacket,
-    CxlCacheBasePacket,
-    SIDEBAND_TYPES,
-    PAYLOAD_TYPE,
+from opencis.cxl.transport.common import BasePacket
+from opencis.cxl.transport.sideband_packets import BaseSidebandPacket
+from opencis.cxl.transport.cxl_io_packets import CxlIoBasePacket
+from opencis.cxl.transport.cxl_cache_packets import CxlCacheBasePacket
+from opencis.cxl.transport.cxl_mem_packets import CxlMemBasePacket
+from opencis.cxl.transport.packet_constants import (
+    SYSTEM_PAYLOAD_TYPE,
     CXL_IO_FMT_TYPE,
+    SIDEBAND_TYPES,
+)
+
+from opencis.cxl.transport.cci_packets import (
     CciRequestPacket,
     CciResponsePacket,
     GetLdInfoResponsePacket,
@@ -176,7 +179,7 @@ class CxlPacketProcessor(RunnableComponent):
     @staticmethod
     def _is_disconnection_notification(packet) -> bool:
         base_packet = cast(BasePacket, packet)
-        if base_packet.system_header.payload_type != PAYLOAD_TYPE.SIDEBAND:
+        if base_packet.system_header.payload_type != SYSTEM_PAYLOAD_TYPE.SIDEBAND:
             return False
         sideband = cast(BaseSidebandPacket, packet)
         return sideband.sideband_header.type == SIDEBAND_TYPES.CONNECTION_DISCONNECTED

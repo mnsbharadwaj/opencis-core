@@ -62,7 +62,7 @@ class CciPayload:
             # field is wider than a single word, return bytes
             byte_start = (payload._base + offset) // 8
             full_bytes = width // 8
-            data = bytes(payload._packet.buf[byte_start : byte_start + full_bytes])
+            data = payload._packet.get_bytes(byte_start, full_bytes)
 
             tail_bits = width - full_bytes * 8
             if tail_bits:
@@ -89,7 +89,7 @@ class CciPayload:
             byte_start = (payload._base + offset) // 8
             full_bytes = width // 8
             if full_bytes:
-                payload._packet.buf[byte_start : byte_start + full_bytes] = value[:full_bytes]
+                payload._packet.set_bytes(byte_start, value[:full_bytes])
 
             tail_width = width - (full_bytes * 8)
             if tail_width:
@@ -142,7 +142,8 @@ class CciPayload:
 
         byte_start = self._base // 8
         byte_len = (total_bits + 7) // 8
-        return bytes(self._packet.buf[byte_start : byte_start + byte_len])
+        data = self._packet.get_bytes(byte_start, byte_len)
+        return data
 
     def set_dynamic_field_width(self, name: str, width_bits: int) -> None:
         if name not in self._fields:

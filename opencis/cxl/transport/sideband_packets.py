@@ -22,9 +22,9 @@ from opencis.cxl.transport.mixin import (
 
 
 class BaseSidebandPacket(
+    _GenBaseSidebandPacket,
     BasePacketMixin,
     SidebandPacketMixin,
-    _GenBaseSidebandPacket,
 ):
     @classmethod
     def create(cls, type: SIDEBAND_TYPES) -> "BaseSidebandPacket":
@@ -36,9 +36,9 @@ class BaseSidebandPacket(
 
 
 class SidebandConnectionRequestPacket(
+    _GenSidebandConnectionRequestPacket,
     BasePacketMixin,
     SidebandPacketMixin,
-    _GenSidebandConnectionRequestPacket,
     PacketDataMixin,
 ):
     @classmethod

@@ -186,23 +186,40 @@ class CxlPacketProcessor(RunnableComponent):
 
     def _push_tlp_table_entry(self, cxl_io_packet: CxlIoBasePacket):
         tid = cxl_io_packet.get_transaction_id()
-        if tid in self._tlp_table:
-            raise Exception(f"tid ({tid:02x}) already exists in the TLP table")
+        # Since USP and R (Root Port) are agnostic to the existence (or even the concept of)
+        # MLD, the LD-ID field is considered undefined. To ensure consistent matching of TLP
+        # entries, always set LD-ID to 0.
+        if self._component_type in (CXL_COMPONENT_TYPE.USP, CXL_COMPONENT_TYPE.R):
+            ld_id = 0
+        else:
+            ld_id = cxl_io_packet.tlp_prefix.ld_id
+        t_index = (tid << 8) | ld_id
+
+        if t_index in self._tlp_table:
+            raise Exception(f"t_index ({t_index:02x}) already exists in the TLP table")
         if cxl_io_packet.is_cfg():
             fifo_type = CXL_IO_FIFO_TYPE.CFG
         elif cxl_io_packet.is_mmio():
             fifo_type = CXL_IO_FIFO_TYPE.MMIO
         else:
             fmt_type_str = CXL_IO_FMT_TYPE(cxl_io_packet.cxl_io_header.fmt_type)
-            raise Exception(f"pushing tid of {fmt_type_str} type is not allowed")
-        self._tlp_table[tid] = fifo_type
+            raise Exception(f"pushing t_index of {fmt_type_str} type is not allowed")
+        self._tlp_table[t_index] = fifo_type
 
     def _pop_tlp_table_entry(self, cxl_io_packet: CxlIoBasePacket) -> CXL_IO_FIFO_TYPE:
         tid = cxl_io_packet.get_transaction_id()
-        if tid not in self._tlp_table:
-            raise Exception(f"tid ({tid:02x}) is not found in the TLP table")
-        fifo_type = self._tlp_table[tid]
-        del self._tlp_table[tid]
+        # Same reasoning as push function, push and pop must have same mechanism
+        # for no mismatch in TLP table
+        if self._component_type in (CXL_COMPONENT_TYPE.USP, CXL_COMPONENT_TYPE.R):
+            ld_id = 0
+        else:
+            ld_id = cxl_io_packet.tlp_prefix.ld_id
+        t_index = (tid << 8) | ld_id
+
+        if t_index not in self._tlp_table:
+            raise Exception(f"t_index ({t_index:02x}) is not found in the TLP table")
+        fifo_type = self._tlp_table[t_index]
+        del self._tlp_table[t_index]
         return fifo_type
 
     async def _process_incoming_packets(self):

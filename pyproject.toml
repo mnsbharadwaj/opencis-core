@@ -36,6 +36,10 @@ disable = [
   "too-many-public-methods",
   "too-many-statements",
   "unspecified-encoding",
+  "import-outside-toplevel",
+  "too-many-nested-blocks",
+  "duplicate-code",
+  "no-else-return",
 ]
 jobs = 4
 

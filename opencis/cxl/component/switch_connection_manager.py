@@ -28,6 +28,7 @@ from opencis.cxl.component.common import CXL_COMPONENT_TYPE
 from opencis.util.component import RunnableComponent
 from opencis.util.logger import logger
 from opencis.util.server import ServerComponent
+from opencis.cxl.device.config.logical_device import LogicalDeviceConfig
 
 
 @dataclass
@@ -60,12 +61,14 @@ class SwitchConnectionManager(RunnableComponent):
         host: str = "0.0.0.0",
         port: int = 8000,
         connection_timeout_ms: int = 5000,
+        device_configs: Optional[List[LogicalDeviceConfig]] = None,
     ):
         super().__init__()
         self._port_configs = port_configs
         self._host = host
         self._port = port
         self._connection_timeout_ms = connection_timeout_ms
+        self._device_configs = device_configs
         self._ports = [SwitchPort(port_config=port_config) for port_config in port_configs]
         self._server_component = ServerComponent(
             handle_client=self._handle_client,
@@ -160,11 +163,35 @@ class SwitchConnectionManager(RunnableComponent):
         component_type = (
             CXL_COMPONENT_TYPE.USP if port_config.type == PORT_TYPE.USP else CXL_COMPONENT_TYPE.DSP
         )
+        # Find the MLD config for this port
+        mld_config = None
+        if self._device_configs:
+            for device_config in self._device_configs:
+                if hasattr(device_config, "port_index") and device_config.port_index == port_index:
+                    mld_config = device_config
+                    # num_lds_supported only exists on MultiLogicalDeviceConfig
+                    num_lds = getattr(mld_config, "num_lds_supported", 1)
+                    logger.info(
+                        f"SwitchConnectionManager: Found device config for port {port_index}: "
+                        f"num_lds_supported = {num_lds}"
+                    )
+                    break
+
+        if mld_config is None:
+            logger.info(f"SwitchConnectionManager: No device config found for port {port_index}")
+        else:
+            # num_lds_supported only exists on MultiLogicalDeviceConfig
+            num_lds = getattr(mld_config, "num_lds_supported", 1)
+            logger.info(
+                f"SwitchConnectionManager: Passing device config: num_lds_supported = {num_lds}"
+            )
+
         packet_processor = CxlPacketProcessor(
             reader,
             writer,
             cxl_connection,
             component_type,
+            mld_config=mld_config,  # ← Use the local variable we found
             label=f"SwitchPort{port_index}",
         )
         self._ports[port_index].packet_processor = packet_processor

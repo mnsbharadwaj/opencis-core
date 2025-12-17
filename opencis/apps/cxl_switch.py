@@ -39,6 +39,9 @@ from opencis.cxl.cci.generic.information_and_status import (
     IdentifyResponsePayload,
     BackgroundOperationStatusCommand,
 )
+from opencis.cxl.cci.fabric_manager.mld_components import (
+    SetLdAllocationsCommand,
+)
 from opencis.cxl.cci.fabric_manager.physical_switch import (
     IdentifySwitchDeviceCommand,
     GetPhysicalPortStateCommand,
@@ -93,14 +96,22 @@ class CxlSwitch(RunnableComponent):
         for device in device_configs:
             port_index = device.port_index
             if isinstance(device, MultiLogicalDeviceConfig):
-                for ld in device.ld_list:
-                    allocated_ld.setdefault(port_index, []).append(ld)
+                # Only add LDs if the ld_list is not empty (for dynamic configurations)
+                if device.ld_list:
+                    for ld in device.ld_list:
+                        allocated_ld.setdefault(port_index, []).append(ld)
+                # For empty ld_list (dynamic config), don't add any LDs
             else:
+                # For single logical devices, add LD 0
                 allocated_ld[port_index] = [0]
 
         self._device_configs = device_configs
         self._switch_connection_manager = SwitchConnectionManager(
-            switch_config.port_configs, switch_config.host, switch_config.port
+            switch_config.port_configs,
+            switch_config.host,
+            switch_config.port,
+            connection_timeout_ms=5000,  # Add this parameter
+            device_configs=device_configs,  # Use keyword argument
         )
         self._physical_port_manager = PhysicalPortManager(
             self._switch_connection_manager, switch_config.port_configs, self._device_configs
@@ -120,6 +131,7 @@ class CxlSwitch(RunnableComponent):
                 self._mctp_connection_client.get_mctp_connection(),
                 self._switch_connection_manager,
                 switch_config.port_configs,
+                self._virtual_switch_manager,
             )
             self._initialize_mctp_endpoint()
 
@@ -143,6 +155,7 @@ class CxlSwitch(RunnableComponent):
             GetConnectedDevicesCommand(self._physical_port_manager),
             FreezeVppbCommand(self._virtual_switch_manager),
             UnfreezeVppbCommand(self._virtual_switch_manager),
+            SetLdAllocationsCommand(self._virtual_switch_manager),
         ]
         self._mctp_cci_executor.register_cci_commands(commands)
 

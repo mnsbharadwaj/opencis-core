@@ -102,6 +102,13 @@ class CCI_FM_API_COMMAND_OPCODE(IntEnum):
     GET_DC_REGION_EXTENT_LISTS = 0x5603
     INITIATE_DYNAMIC_CAPACITY_ADD = 0x5604
     INITIATE_DYNAMIC_CAPACITY_RELEASE = 0x5605
+    # PBR Switch Command Set (Section 7.7.13, CXL Spec Rev 4.0)
+    IDENTIFY_PBR_SWITCH = 0x5700
+    CONFIGURE_PID_ASSIGNMENT = 0x5704
+    GET_PID_BINDING = 0x5705
+    CONFIGURE_PID_BINDING = 0x5706
+    GET_DRT = 0x5708
+    SET_DRT = 0x5709
     # Custom commands added by Eeum.
     # As per CXL spec's "Table 8-215. CXL FM API Command Opcodes",
     # 52h is for VCS and currently only used till 03h.
@@ -130,6 +137,25 @@ def get_opcode_string(opcode: int) -> str:
         <= opcode
         <= CCI_FM_API_COMMAND_OPCODE.INITIATE_DYNAMIC_CAPACITY_RELEASE
     ):
+        return CCI_FM_API_COMMAND_OPCODE(opcode).name
+
+    # PBR Switch Command Set opcodes (57xx range)
+    pbr_opcodes = {
+        CCI_FM_API_COMMAND_OPCODE.IDENTIFY_PBR_SWITCH,
+        CCI_FM_API_COMMAND_OPCODE.CONFIGURE_PID_ASSIGNMENT,
+        CCI_FM_API_COMMAND_OPCODE.GET_PID_BINDING,
+        CCI_FM_API_COMMAND_OPCODE.CONFIGURE_PID_BINDING,
+        CCI_FM_API_COMMAND_OPCODE.GET_DRT,
+        CCI_FM_API_COMMAND_OPCODE.SET_DRT,
+    }
+    if opcode in pbr_opcodes:
+        return CCI_FM_API_COMMAND_OPCODE(opcode).name
+
+    # Custom Eeum opcodes
+    if opcode in {
+        CCI_FM_API_COMMAND_OPCODE.FREEZE_VPPB,
+        CCI_FM_API_COMMAND_OPCODE.UNFREEZE_VPPB,
+    }:
         return CCI_FM_API_COMMAND_OPCODE(opcode).name
 
     if (

@@ -111,6 +111,64 @@ class SidebandConnectionRequestPacket(BasePacket):
 
 
 #
+# Packet Definitions for PAYLOAD_TYPE.PBR
+#
+class PbrHeader(UnalignedBitStructure):
+    spid: int
+    dpid: int
+    rsvd: int
+    _fields = [
+        BitField("spid", 0, 11),
+        BitField("dpid", 12, 23),
+        BitField("rsvd", 24, 31)
+    ]
+
+
+PBR_HEADER_START = SYSTEM_HEADER_END + 1
+PBR_HEADER_END = PBR_HEADER_START + PbrHeader.get_size() - 1
+PBR_PAYLOAD_START = PBR_HEADER_END + 1
+
+
+class PbrBasePacket(BasePacket):
+    pbr_header: PbrHeader
+    inner_payload: int
+
+    _fields = BasePacket._fields + [
+        StructureField(
+            "pbr_header",
+            PBR_HEADER_START,
+            PBR_HEADER_END,
+            PbrHeader,
+        ),
+        DynamicByteField("inner_payload", PBR_PAYLOAD_START, 0x0),
+    ]
+
+    @staticmethod
+    def create(spid: int, dpid: int, inner_packet: BasePacket) -> "PbrBasePacket":
+        packet = PbrBasePacket()
+        packet.system_header.payload_type = PAYLOAD_TYPE.PBR
+        
+        packet.pbr_header.spid = spid
+        packet.pbr_header.dpid = dpid
+        
+        inner_bytes = bytes(inner_packet)
+        packet.set_dynamic_field_length(len(inner_bytes))
+        packet.inner_payload = int.from_bytes(inner_bytes, "little")
+        packet.system_header.payload_length = len(packet)
+        packet._inner_packet = inner_packet
+        return packet
+
+    def get_inner_packet(self) -> BasePacket:
+        if hasattr(self, "_inner_packet"):
+            return self._inner_packet
+        return None
+
+    def get_inner_packet_bytes(self) -> bytes:
+        length = len(self) - PbrBasePacket.get_size()
+        return self.inner_payload.to_bytes(length, "little")
+
+
+#
 # Packet Definitions for PAYLOAD_TYPE.CXL_IO
 #
 class CXL_IO_PROTOCOL(IntEnum):

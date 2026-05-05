@@ -24,6 +24,7 @@ class PAYLOAD_TYPE(IntEnum):
     CXL_MEM = 2  # Custom packet for CXL.mem
     CXL_CACHE = 3  # Custom packet for CXL.cache
     CCI_MCTP = 4  # Custom packet for CCI MCTP
+    PBR = 5  # Custom packet for PBR wrapped TLPs
     SIDEBAND = 15
 
 
@@ -67,6 +68,9 @@ class BasePacket(UnalignedBitStructure):
 
     def is_sideband(self) -> bool:
         return self.system_header.payload_type == PAYLOAD_TYPE.SIDEBAND
+
+    def is_pbr(self) -> bool:
+        return self.system_header.payload_type == PAYLOAD_TYPE.PBR
 
     def get_type(self) -> str:
         return self.__class__.__name__

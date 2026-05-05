@@ -22,6 +22,7 @@ from opencis.cxl.transport.transaction import (
     CxlCacheH2DReqPacket,
     CxlCacheH2DRspPacket,
     SidebandConnectionRequestPacket,
+    PbrBasePacket,
     CxlIoBasePacket,
     CxlIoCfgRdPacket,
     CxlIoCfgWrPacket,
@@ -113,6 +114,9 @@ class PacketReader(LabeledComponent):
             return self._get_sideband_packet(payload)
         if base_packet.is_cci():
             return self._get_cci_packet(payload)
+        if base_packet.is_pbr():
+            logger.debug(self._create_message("Received Packet is PBR"))
+            return self._get_pbr_packet(payload)
         raise Exception("Unsupported packet")
 
     async def _get_payload(self) -> Tuple[BasePacket, bytes]:
@@ -244,6 +248,11 @@ class PacketReader(LabeledComponent):
             raise Exception("Unsupported CCI packet")
 
         return cci_packet
+
+    def _get_pbr_packet(self, payload: bytes) -> PbrBasePacket:
+        pbr_packet = PbrBasePacket()
+        pbr_packet.reset(payload)
+        return pbr_packet
 
     def _get_sideband_packet(self, payload: bytes) -> BaseSidebandPacket:
         base_sideband_packet = BaseSidebandPacket()

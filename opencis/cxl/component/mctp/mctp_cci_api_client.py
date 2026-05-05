@@ -54,6 +54,22 @@ from opencis.cxl.cci.vendor_specfic import (
     GetConnectedDevicesCommand,
     GetConnectedDevicesResponsePayload,
 )
+from opencis.cxl.cci.fabric_manager.pbr_switch import (
+    IdentifyPbrSwitchCommand,
+    IdentifyPbrSwitchResponsePayload,
+    ConfigurePidAssignmentCommand,
+    ConfigurePidAssignmentRequestPayload,
+    GetPidBindingCommand,
+    GetPidBindingRequestPayload,
+    GetPidBindingResponsePayload,
+    ConfigurePidBindingCommand,
+    ConfigurePidBindingRequestPayload,
+    GetDrtCommand,
+    GetDrtRequestPayload,
+    GetDrtResponsePayload,
+    SetDrtCommand,
+    SetDrtRequestPayload,
+)
 from opencis.cxl.cci.common import CCI_RETURN_CODE
 from opencis.cxl.component.cci_executor import CciRequest
 from opencis.util.component import RunnableComponent
@@ -362,5 +378,111 @@ class MctpCciApiClient(RunnableComponent):
             CCI_RETURN_CODE.SUCCESS,
             CCI_RETURN_CODE.BACKGROUND_COMMAND_STARTED,
         ):
+            return (return_code, None)
+        return (return_code, return_code)
+
+    # ------------------------------------------------------------------
+    # PBR Switch Command Set (Section 7.7.13)
+    # ------------------------------------------------------------------
+
+    async def identify_pbr_switch(
+        self,
+    ) -> Tuple[CCI_RETURN_CODE, Optional[IdentifyPbrSwitchResponsePayload]]:
+        """Identify PBR Switch (Opcode 5700h) — read switch fabric capabilities."""
+        response_message_packet = await self._send_cci_command(
+            IdentifyPbrSwitchCommand.create_cci_request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = IdentifyPbrSwitchCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        logger.debug(self._create_message(response.get_pretty_print()))
+        return (return_code, response)
+
+    async def configure_pid_assignment(
+        self, request: ConfigurePidAssignmentRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Configure PID Assignment (Opcode 5704h) — assign/clear PIDs on switch targets.
+
+        NOTE: This does NOT update the DRT. Call set_drt() separately to enable routing.
+        """
+        response_message_packet = await self._send_cci_command(
+            ConfigurePidAssignmentCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def get_pid_binding(
+        self, request: GetPidBindingRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetPidBindingResponsePayload]]:
+        """Get PID Binding (Opcode 5705h) — read current fabric edge binding with HMAT info."""
+        response_message_packet = await self._send_cci_command(
+            GetPidBindingCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetPidBindingCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        logger.debug(self._create_message(response.get_pretty_print()))
+        return (return_code, response)
+
+    async def configure_pid_binding(
+        self,
+        request: ConfigurePidBindingRequestPayload,
+        wait_for_completion: bool = True,
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Configure PID Binding (Opcode 5706h) — bind/unbind fabric edge PIDs (background op)."""
+        response_message_packet = await self._send_cci_command(
+            ConfigurePidBindingCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.header.return_code)
+        if wait_for_completion:
+            return_code = await self._wait_for_background_operation()
+        if return_code not in (
+            CCI_RETURN_CODE.SUCCESS,
+            CCI_RETURN_CODE.BACKGROUND_COMMAND_STARTED,
+        ):
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def get_drt(
+        self, request: GetDrtRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetDrtResponsePayload]]:
+        """Get DRT (Opcode 5708h) — read DPID→egress-port routing table entries.
+
+        The DRT is indexed by DPID; each entry maps a destination PID to an
+        egress physical port (or RGT index for multicast routing).
+        """
+        response_message_packet = await self._send_cci_command(
+            GetDrtCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetDrtCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        logger.debug(self._create_message(response.get_pretty_print()))
+        return (return_code, response)
+
+    async def set_drt(
+        self, request: SetDrtRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Set DRT (Opcode 5709h) — program DPID→egress-port routing table entries.
+
+        This is the second step after Configure PID Assignment (5704h). The FM
+        must call this to enable the switch to actually route packets for a PID.
+        """
+        response_message_packet = await self._send_cci_command(
+            SetDrtCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
             return (return_code, None)
         return (return_code, return_code)

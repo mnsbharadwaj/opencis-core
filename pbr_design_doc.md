@@ -346,20 +346,179 @@ The `FabricManagerSocketIoServer` exposes these new events (same JSON over Socke
 
 ## 10. Testing
 
-### 10.1 Unit + Integration Tests (no running switch needed)
+Three testing modes are available, from simplest to most complete.
 
-```bash
-# All 47 PBR tests
-py -m pytest tests/test_pbr_data_plane.py tests/test_pbr_switch_command_set.py -v
+| Mode | Script | Requires | Checks |
+|------|--------|----------|--------|
+| **Standalone in-process** | `py pbr_standalone_test.py` | Nothing | 27 |
+| **pytest suite** | `py -m pytest tests/test_pbr_*.py` | Nothing | 47 |
+| **Live switch + MCTP** | `py pbr_cli_test.py` | Running switch | 6 |
 
-# Expected output:
-# tests/test_pbr_data_plane.py::test_pbr_data_plane_routing          PASSED
-# tests/test_pbr_data_plane.py::test_pbr_end_to_end_address_routing  PASSED
-# tests/test_pbr_switch_command_set.py::... (45 tests)                PASSED
-# 47 passed
+---
+
+### 10.1 Standalone In-Process Test (recommended first step)
+
+Tests all 6 PBR CCI commands **without a running switch, server, or QEMU**.
+The script calls the command handlers directly in-process — exactly how the
+switch executes them when a real FM sends them over the wire.
+
+#### How it works internally
+
+```
+pbr_standalone_test.py
+        |
+        |  Creates PbrSwitchManager with 2 pre-registered PidTargets
+        |  (ports 2 and 3) so assign_pid() can validate them
+        |
+        +--[1]--> IdentifyPbrSwitchCommand._execute()      [0x5700]
+        |              |
+        |              +--> PbrSwitchManager.get_identify_info()
+        |              +--> Checks: num_drts >= 1, gae_support_map type
+        |
+        +--[2]--> ConfigurePidAssignmentCommand._execute() [0x5704]
+        |              |
+        |              +--> PbrSwitchManager.assign_pid(0x100, target=2)
+        |              +--> PbrSwitchManager.assign_pid(0x200, target=3)
+        |              +--> Checks: success, duplicate rejection, idempotent assign
+        |
+        +--[3]--> GetPidBindingCommand._execute()          [0x5705]
+        |              |
+        |              +--> PbrSwitchManager.get_pid_binding(vcs=0, vppb=0)
+        |              +--> Checks: pid=0xFFF (unbound before bind)
+        |
+        +--[4]--> ConfigurePidBindingCommand._execute()    [0x5706]
+        |              |
+        |              +--> PbrSwitchManager.configure_pid_binding(BIND,
+        |              |        vcs=0, vppb=0, pid=0x100, hmat={lat=5, bw=10})
+        |              +--> Checks: SUCCESS, GetPidBinding now shows pid=0x100
+        |
+        +--[5]--> SetDrtCommand._execute()                 [0x5709]
+        |              |
+        |              +--> PbrSwitchManager.set_drt(0, start=0x100,
+        |              |        [DrtEntry(PHYSICAL_PORT, target=2)])
+        |              +--> Checks: SUCCESS, RESERVED rejection, bad index
+        |
+        +--[6]--> GetDrtCommand._execute()                 [0x5708]
+        |              |
+        |              +--> PbrSwitchManager.get_drt(0, start=0x100, num=1)
+        |              +--> Checks: entry type, routing_target, multi-read,
+        |                          INVALID unset entry, bad index rejection
+        |
+        +--[B]--> ConfigurePidAssignmentCommand._execute() [0x5704 CLEAR]
+                       |
+                       +--> PbrSwitchManager.clear_pid(0x100, target=2)
+                       +--> Checks: clear SUCCESS, re-assign to new target
 ```
 
-### 10.2 All 6 Commands via CLI (standalone switch)
+#### Steps to run
+
+**Step 1** — Open a command prompt and go to the repo:
+
+```cmd
+cd C:\Users\pavan\Desktop\cxl\opencis-core
+```
+
+**Step 2** — Run the test:
+
+```cmd
+py pbr_standalone_test.py
+```
+
+**No other steps required.** No switch to start. No ports to open.
+
+#### Expected output
+
+```
+PBR FM CCI Commands  --  In-Process Smoke-Test
+No running switch required. Tests command handlers directly.
+
+--------------------------------------------------------------
+  1. Identify PBR Switch  [0x5700]
+--------------------------------------------------------------
+  [PASS]  Return code SUCCESS
+  [PASS]  num_drts >= 1  (num_drts=1)
+  [PASS]  gae_support_map is int  (0x0000000000000000)
+  [PASS]  routing_caps is int  (0x00)
+
+--------------------------------------------------------------
+  2. Configure PID Assignment  (ASSIGN)  [0x5704]
+--------------------------------------------------------------
+  [PASS]  Assign PID 0x100 -> port 2 and PID 0x200 -> port 3
+  [PASS]  Duplicate PID to different target -> INVALID_INPUT  (rc=INVALID_INPUT)
+  [PASS]  Re-assign same PID to same target (idempotent) -> SUCCESS
+
+--------------------------------------------------------------
+  3. Get PID Binding  (before bind)  [0x5705]
+--------------------------------------------------------------
+  [PASS]  Return code SUCCESS
+  [PASS]  pid = 0xFFF (not yet bound)  (pid=0xfff)
+
+--------------------------------------------------------------
+  4. Configure PID Binding  (BIND)  [0x5706]
+--------------------------------------------------------------
+  [PASS]  Bind vcs0/vppb0 -> PID 0x100 succeeds
+  [PASS]  Binding now shows PID = 0x100  (pid=0x100)
+  [PASS]  HMAT latency entry = 5  (latency=5)
+  [PASS]  HMAT bw entry = 10  (bw=10)
+
+--------------------------------------------------------------
+  5. Set DRT  [0x5709]
+--------------------------------------------------------------
+  [PASS]  DRT[0][0x100] -> Physical Port 2
+  [PASS]  DRT[0][0x200] -> Physical Port 3
+  [PASS]  RESERVED entry type -> INVALID_INPUT  (rc=INVALID_INPUT)
+  [PASS]  Invalid DRT index -> INVALID_INPUT  (rc=INVALID_INPUT)
+
+--------------------------------------------------------------
+  6. Get DRT  [0x5708]
+--------------------------------------------------------------
+  [PASS]  Return code SUCCESS
+  [PASS]  1 entry returned  (count=1)
+  [PASS]  entry type = PHYSICAL_PORT  (type=PHYSICAL_PORT)
+  [PASS]  routing_target = 2  (target=2)
+  [PASS]  2 entries returned for num_entries=2  (count=2)
+  [PASS]  Entry[0x100] = PHYSICAL_PORT/2
+  [PASS]  Entry[0x101] = INVALID (unset)  (type=INVALID)
+  [PASS]  Invalid DRT index -> INVALID_INPUT
+
+--------------------------------------------------------------
+  B. Configure PID Assignment  (CLEAR)  [0x5704]
+--------------------------------------------------------------
+  [PASS]  Clear PID 0x100 succeeds
+  [PASS]  Re-assign cleared PID to new target -> SUCCESS
+
+==============================================================
+  RESULT : ALL 27 PASSED / 27 total checks
+==============================================================
+```
+
+> **Note**: Lines like `[PbrSwitchManager] set_drt: drt_index 99 out of range`
+> printed to the console are **expected** — they are the switch manager's error
+> logs for the intentional invalid-input test cases. The `[PASS]` lines confirm
+> those errors were correctly returned as `INVALID_INPUT`.
+
+---
+
+### 10.2 pytest Unit + Integration Tests (no running switch needed)
+
+```cmd
+# All 47 PBR tests — verbose
+py -m pytest tests/test_pbr_data_plane.py tests/test_pbr_switch_command_set.py -v
+
+# Quick (no verbose)
+py -m pytest tests/test_pbr_data_plane.py tests/test_pbr_switch_command_set.py -q
+```
+
+Expected output:
+```
+tests/test_pbr_data_plane.py::test_pbr_data_plane_routing          PASSED
+tests/test_pbr_data_plane.py::test_pbr_end_to_end_address_routing  PASSED
+tests/test_pbr_switch_command_set.py::... (45 tests)               PASSED
+======================= 47 passed in 0.50s ============================
+```
+
+
+### 10.3 All 6 Commands via CLI (live switch over MCTP)
 
 **Step 1** — Start the switch in PBR mode (edit your env config or use Python directly):
 

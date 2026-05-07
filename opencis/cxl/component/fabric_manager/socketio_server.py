@@ -27,6 +27,15 @@ from opencis.cxl.component.mctp.mctp_cci_api_client import (
     FreezeVppbRequestPayload,
     UnfreezeVppbRequestPayload,
 )
+from opencis.cxl.cci.fabric_manager.pbr_switch import (
+    ConfigurePidAssignmentRequestPayload,
+    PidAssignmentEntry,
+    GetPidBindingRequestPayload,
+    ConfigurePidBindingRequestPayload,
+    GetDrtRequestPayload,
+    SetDrtRequestPayload,
+)
+from opencis.cxl.component.pbr_switch_manager import DrtEntry, DrtEntryType
 from opencis.cxl.cci.common import (
     CCI_VENDOR_SPECIFIC_OPCODE,
     get_opcode_string,
@@ -178,6 +187,13 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("mld:getAllocation")
         self._register_handler("mld:setAllocation")
         self._register_handler("background:getStatus")
+        # PBR switch FM commands
+        self._register_handler("pbr:identify")
+        self._register_handler("pbr:configurePid")
+        self._register_handler("pbr:getPidBinding")
+        self._register_handler("pbr:configurePidBinding")
+        self._register_handler("pbr:getDrt")
+        self._register_handler("pbr:setDrt")
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
     def _register_handler(self, event):
@@ -224,6 +240,21 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._freeze_vppb(data)
             elif event_type == "vcs:unfreeze":
                 response = await self._unfreeze_vppb(data)
+            # PBR commands
+            elif event_type == "pbr:identify":
+                response = await self._pbr_identify()
+            elif event_type == "pbr:configurePid":
+                response = await self._pbr_configure_pid(data)
+            elif event_type == "pbr:getPidBinding":
+                response = await self._pbr_get_pid_binding(data)
+            elif event_type == "pbr:configurePidBinding":
+                response = await self._pbr_configure_pid_binding(data)
+            elif event_type == "pbr:getDrt":
+                response = await self._pbr_get_drt(data)
+            elif event_type == "pbr:setDrt":
+                response = await self._pbr_set_drt(data)
+            else:
+                response = CommandResponse(error=f"Unknown event: {event_type}")
             logger.info(self._create_message(f"Response: {pformat(response)}"))
             logger.debug(self._create_message("Completed SocketIO Request"))
             return response
@@ -1029,6 +1060,138 @@ class FabricManagerSocketIoServer(RunnableComponent):
     async def _send_update_physical_ports_notification(self):
         # Emitting event without arguments
         await self._sio.emit("port:updated")
+
+    # -------------------------------------------------------------------------
+    # PBR Switch FM command handlers
+    # Called from _handle_event for pbr:* Socket.IO events.
+    # The data dict keys mirror the CXL spec field names in camelCase.
+    # -------------------------------------------------------------------------
+
+    async def _pbr_identify(self) -> CommandResponse:
+        (return_code, response) = await self._mctp_client.identify_pbr_switch()
+        if response:
+            return CommandResponse(error="", result={
+                "gaeSupportMap": response.gae_support_map,
+                "numDrts": response.num_drts,
+                "numRgts": response.num_rgts,
+                "routingCaps": response.routing_caps,
+            })
+        return CommandResponse(error=return_code.name)
+
+    async def _pbr_configure_pid(self, data) -> CommandResponse:
+        """
+        Expected data:
+          {
+            "operation": 0,   # 0=Assign, 1=Clear
+            "entries": [
+              {"pid": 0x123, "targetId": 2, "instanceId": 0},
+              ...
+            ]
+          }
+        """
+        entries = [
+            PidAssignmentEntry(
+                pid=e["pid"],
+                target_id=e["targetId"],
+                instance_id=e.get("instanceId", 0),
+            )
+            for e in data.get("entries", [])
+        ]
+        request = ConfigurePidAssignmentRequestPayload(
+            operation=data.get("operation", 0),
+            entries=entries,
+        )
+        (return_code, response) = await self._mctp_client.configure_pid_assignment(request)
+        if response is not None:
+            return CommandResponse(error="", result=return_code.name)
+        return CommandResponse(error=return_code.name)
+
+    async def _pbr_get_pid_binding(self, data) -> CommandResponse:
+        """
+        Expected data: {"pid": 0x123}
+        """
+        request = GetPidBindingRequestPayload(pid=data["pid"])
+        (return_code, response) = await self._mctp_client.get_pid_binding(request)
+        if response:
+            return CommandResponse(error="", result={
+                "pid": response.pid,
+                "boundPid": response.bound_pid,
+                "hmatEntryIndex": response.hmat_entry_index,
+            })
+        return CommandResponse(error=return_code.name)
+
+    async def _pbr_configure_pid_binding(self, data) -> CommandResponse:
+        """
+        Expected data: {"pid": 0x123, "targetPid": 0x456, "hmatEntryIndex": 0}
+        """
+        request = ConfigurePidBindingRequestPayload(
+            pid=data["pid"],
+            target_pid=data.get("targetPid", 0xFFF),
+            hmat_entry_index=data.get("hmatEntryIndex", 0),
+        )
+        (return_code, response) = await self._mctp_client.configure_pid_binding(request)
+        if response is not None:
+            return CommandResponse(error="", result=return_code.name)
+        return CommandResponse(error=return_code.name)
+
+    async def _pbr_get_drt(self, data) -> CommandResponse:
+        """
+        Expected data:
+          {"drtIndex": 0, "startEntry": 0, "numEntries": 16}
+        """
+        request = GetDrtRequestPayload(
+            drt_index=data.get("drtIndex", 0),
+            start_entry=data.get("startEntry", 0),
+            num_entries=data.get("numEntries", 16),
+        )
+        (return_code, response) = await self._mctp_client.get_drt(request)
+        if response:
+            entries = [
+                {"entryType": e.entry_type.name, "routingTarget": e.routing_target}
+                for e in response.entries
+            ]
+            return CommandResponse(error="", result={
+                "drtIndex": response.drt_index,
+                "startEntry": response.start_entry,
+                "associatedRgtIndex": response.associated_rgt_index,
+                "entries": entries,
+            })
+        return CommandResponse(error=return_code.name)
+
+    async def _pbr_set_drt(self, data) -> CommandResponse:
+        """
+        Expected data:
+          {
+            "drtIndex": 0,
+            "startEntry": 0x123,
+            "entries": [
+              {"entryType": "PHYSICAL_PORT", "routingTarget": 2},
+              ...
+            ]
+          }
+        """
+        type_map = {
+            "PHYSICAL_PORT": DrtEntryType.PHYSICAL_PORT,
+            "RGT_INDEX": DrtEntryType.RGT_INDEX,
+            "INVALID": DrtEntryType.INVALID,
+        }
+        entries = [
+            DrtEntry(
+                entry_type=type_map.get(e.get("entryType", "INVALID"), DrtEntryType.INVALID),
+                routing_target=e.get("routingTarget", 0),
+            )
+            for e in data.get("entries", [])
+        ]
+        request = SetDrtRequestPayload(
+            drt_index=data.get("drtIndex", 0),
+            start_entry=data.get("startEntry", 0),
+            entries=entries,
+        )
+        (return_code, response) = await self._mctp_client.set_drt(request)
+        if response is not None:
+            return CommandResponse(error="", result=return_code.name)
+        return CommandResponse(error=return_code.name)
+
 
     async def _send_update_virtual_cxl_switches_notification(self):
         # Emitting event without arguments

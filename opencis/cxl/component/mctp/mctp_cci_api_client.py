@@ -50,6 +50,22 @@ from opencis.cxl.cci.vendor_specfic import (
     GetConnectedDevicesCommand,
     GetConnectedDevicesResponsePayload,
 )
+from opencis.cxl.cci.fabric_manager.pbr_switch import (
+    IdentifyPbrSwitchCommand,
+    IdentifyPbrSwitchResponsePayload,
+    ConfigurePidAssignmentCommand,
+    ConfigurePidAssignmentRequestPayload,
+    GetPidBindingCommand,
+    GetPidBindingRequestPayload,
+    GetPidBindingResponsePayload,
+    ConfigurePidBindingCommand,
+    ConfigurePidBindingRequestPayload,
+    GetDrtCommand,
+    GetDrtRequestPayload,
+    GetDrtResponsePayload,
+    SetDrtCommand,
+    SetDrtRequestPayload,
+)
 from opencis.cxl.cci.common import CCI_RETURN_CODE
 from opencis.cxl.component.cci_executor import CciRequest
 from opencis.util.component import RunnableComponent
@@ -369,5 +385,86 @@ class MctpCciApiClient(RunnableComponent):
             CCI_RETURN_CODE.SUCCESS,
             CCI_RETURN_CODE.BACKGROUND_COMMAND_STARTED,
         ):
+            return (return_code, None)
+        return (return_code, return_code)
+
+    # -------------------------------------------------------------------------
+    # PBR Switch FM API commands (CXL Spec Rev 4.0 §7.7.13)
+    # -------------------------------------------------------------------------
+
+    async def identify_pbr_switch(
+        self,
+    ) -> Tuple[CCI_RETURN_CODE, Optional[IdentifyPbrSwitchResponsePayload]]:
+        response_message_packet = await self._send_cci_command(
+            IdentifyPbrSwitchCommand.create_cci_request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = IdentifyPbrSwitchCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        logger.debug(self._create_message(response.get_pretty_print()))
+        return (return_code, response)
+
+    async def configure_pid_assignment(
+        self, request: ConfigurePidAssignmentRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        response_message_packet = await self._send_cci_command(
+            ConfigurePidAssignmentCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def get_pid_binding(
+        self, request: GetPidBindingRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetPidBindingResponsePayload]]:
+        response_message_packet = await self._send_cci_command(
+            GetPidBindingCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetPidBindingCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        return (return_code, response)
+
+    async def configure_pid_binding(
+        self, request: ConfigurePidBindingRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        response_message_packet = await self._send_cci_command(
+            ConfigurePidBindingCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def get_drt(
+        self, request: GetDrtRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetDrtResponsePayload]]:
+        response_message_packet = await self._send_cci_command(
+            GetDrtCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetDrtCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        logger.debug(self._create_message(response.get_pretty_print()))
+        return (return_code, response)
+
+    async def set_drt(
+        self, request: SetDrtRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        response_message_packet = await self._send_cci_command(
+            SetDrtCommand.create_cci_request, request
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
             return (return_code, None)
         return (return_code, return_code)

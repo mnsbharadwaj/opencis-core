@@ -59,6 +59,15 @@ from opencis.cxl.cci.vendor_specfic import (
     NotifyDeviceUpdateRequestPayload,
     GetConnectedDevicesCommand,
 )
+from opencis.cxl.cci.fabric_manager.pbr_switch import (
+    IdentifyPbrSwitchCommand,
+    ConfigurePidAssignmentCommand,
+    GetPidBindingCommand,
+    ConfigurePidBindingCommand,
+    GetDrtCommand,
+    SetDrtCommand,
+)
+from opencis.cxl.component.pbr_switch_manager import PbrSwitchManager
 from opencis.util.component import RunnableComponent
 from opencis.cxl.device.config.logical_device import (
     LogicalDeviceConfig,
@@ -75,6 +84,7 @@ class CxlSwitchConfig:
     mctp_host: str = "0.0.0.0"
     mctp_port: int = 8100
     run_as_child: bool = False
+    enable_pbr: bool = False
 
 
 class CxlSwitch(RunnableComponent):
@@ -122,6 +132,10 @@ class CxlSwitch(RunnableComponent):
             allocated_ld,
         )
 
+        # PBR Switch Manager — only instantiated if enable_pbr=True
+        self._pbr_switch_manager = PbrSwitchManager() if switch_config.enable_pbr else None
+        self._enable_pbr = switch_config.enable_pbr
+
         self._start_mctp = start_mctp
         if self._start_mctp:
             self._mctp_connection_client = MctpConnectionClient(
@@ -157,6 +171,16 @@ class CxlSwitch(RunnableComponent):
             UnfreezeVppbCommand(self._virtual_switch_manager),
             SetLdAllocationsCommand(self._virtual_switch_manager),
         ]
+        # Register PBR commands only if the switch is in PBR mode
+        if self._enable_pbr and self._pbr_switch_manager:
+            commands.extend([
+                IdentifyPbrSwitchCommand(self._pbr_switch_manager),
+                ConfigurePidAssignmentCommand(self._pbr_switch_manager),
+                GetPidBindingCommand(self._pbr_switch_manager),
+                ConfigurePidBindingCommand(self._pbr_switch_manager),
+                GetDrtCommand(self._pbr_switch_manager),
+                SetDrtCommand(self._pbr_switch_manager),
+            ])
         self._mctp_cci_executor.register_cci_commands(commands)
 
         async def handle_port_event(event: PortUpdateEvent):

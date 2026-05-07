@@ -478,3 +478,211 @@ result = sio.call("pbr:setDrt", {
 | `enable_pbr=False` default on `CxlSwitchConfig` | Backward-compatible — existing VSM topologies unchanged |
 | PBR commands registered in `_initialize_mctp_endpoint()` | Follows exact same pattern as VCS, MLD commands — no new abstractions |
 | `PbrHdmDecoderManager` separate from `PbrSwitchManager` | Separation of concerns: HDM decoder is data-plane (address→DPID), switch manager is control-plane (CCI state) |
+| `ConfigurePidBindingCommand` as `CciBackgroundCommand` | CXL spec §7.7.13.7 mandates background operation — binding requires link-state transitions |
+| No changes to `MctpCciExecutor` dispatch loop | Opcode dispatch is fully generic; new opcodes handled automatically via `register_cci_commands()` |
+
+---
+
+## 12. Why Each File Was Changed — Per-File Design Rationale
+
+### 12.1 Transport Layer
+
+#### `packet_constants.py` — MODIFIED
+**Why**: The CXL spec defines `SYSTEM_PAYLOAD_TYPE` as a field in `SystemHeader`
+that identifies each TLP's payload type. PBR introduces type value `5` for
+packets carrying a PBR TLP Header (PTH). Without registering this constant, the
+router cannot distinguish a PBR-wrapped packet from CXL-IO or CXL.mem at runtime.
+
+**Alternative rejected**: Reuse an existing type with a flag byte. Rejected —
+the spec explicitly reserves value `5` for PBR; deviating breaks interop with hardware.
+
+---
+
+#### `fields.py` — MODIFIED
+**Why**: `fields.py` is the single source of truth for all CXL packet header field
+layouts. The PBR TLP Header (CXL 4.0 §7.6.1) has two 12-bit fields (SPID, DPID)
+packed into 4 bytes. Adding `PbrHeader` here ensures both the Cython generator and
+the pure-Python fallback generator produce correct bit-field accessors.
+
+**Alternative rejected**: Hard-code bit manipulation in `pbr_packets.py`. Rejected —
+all other headers use the declarative field list; deviating creates a maintenance
+inconsistency and breaks the generator pipeline.
+
+---
+
+#### `packets.py` — MODIFIED
+**Why**: Every CXL packet type is assembled as a `BasePacket` subclass or composite
+in `packets.py`. The `PbrBasePacket` must be registered here so the packet
+infrastructure (size calculation, buffer allocation, field accessor generation)
+works consistently with all other packet types.
+
+**Alternative rejected**: Define `PbrBasePacket` entirely in `pbr_packets.py`.
+Rejected — the generated accessor classes produced by the generator reference
+`packets.py` layouts; keeping the definition here preserves the generator pipeline contract.
+
+---
+
+#### `mixin.py` — MODIFIED
+**Why**: `PbrSwitchRouter` must quickly classify every incoming packet as PBR or HBR
+at the top of its routing loop. Without a method on the packet itself, the router
+would scatter raw `system_header.payload_type` field checks throughout its logic.
+
+**What added**: `is_pbr()` on `BasePacketMixin`:
+```python
+def is_pbr(self) -> bool:
+    return self.system_header.payload_type == SYSTEM_PAYLOAD_TYPE.PBR
+```
+
+**Alternative rejected**: Inline the check in the router. Rejected — `is_pbr()` is
+semantically a packet property, consistent with `is_cxl_io()`, `is_mem()` that already exist.
+
+---
+
+#### `generate_py_fallback.py` — NEW
+**Why**: The packet field accessor classes are normally produced by compiling
+`packet_structs.pyx` with Cython, which requires MSVC on Windows. The development
+environment lacks MSVC. Without a fallback, the entire packet layer is broken.
+
+**Critical fix needed**: Field bit-offsets must account for the struct's byte offset
+within the shared parent buffer: `self._p * 8 + field_bit_start`. Without this,
+all field reads/writes in composite packets are corrupted.
+
+**Key design choice**: Generated file is a static artifact (not generated at import
+time) — startup cost is zero and the file can be inspected. Python's import system
+auto-prefers the `.pyd`/`.so` Cython extension when compiled, so no runtime
+branching is needed.
+
+---
+
+#### `pbr_packets.py` — NEW
+**Why**: A clean user-facing API was needed for two operations:
+1. `PbrBasePacket.create(spid, dpid)` — allocate a fresh PBR header packet
+2. `PbrBasePacket.encapsulate(spid, dpid, inner_packet)` — wrap an existing HBR
+   packet in a PBR header for ingress routing
+
+**Key design choice**: `encapsulate()` stores a reference to the original inner
+packet as `_inner_packet`. This enables **zero-copy decapsulation** at egress —
+the router retrieves `pbr_pkt._inner_packet` directly instead of re-parsing bytes.
+
+---
+
+### 12.2 Control Plane
+
+#### `hdm_decoder.py` — MODIFIED
+**Why**: At ingress, `PbrSwitchRouter` must translate the destination Host Physical
+Address (HPA) of an HBR TLP into a DPID to look up the correct DRT entry. The
+existing `HdmDecoder` handles HPA→CXL memory decoding for HBR; PBR needs an
+analogous component for address-to-DPID resolution.
+
+Added to the **existing file** (not a new file) because `PbrHdmDecoder` and
+`PbrHdmDecoderManager` are logically part of the HDM decoder family.
+
+**Alternative rejected**: Embed address lookup inside `PbrSwitchManager`. Rejected —
+HDM decoder is a data-plane concept (address translation); `PbrSwitchManager` is a
+control-plane concept (CCI state). Mixing them violates separation of concerns.
+
+---
+
+#### `pbr_switch_manager.py` — NEW
+**Why**: A central, injectable state store was needed for all PBR control-plane data:
+PID assignments, DRT tables, and PID bindings. This follows the exact same pattern as
+`VirtualSwitchManager` and `PhysicalPortManager` — a plain Python class injected into
+each CCI command handler, making each command independently testable.
+
+**Key design choices**:
+- **Stateless across restarts**: No persistence. The FM re-programs all state on
+  reconnect (standard CXL FM model).
+- **`PidTarget` list constructor-injected**: The manager doesn't auto-discover ports;
+  the topology owner provides the target list, making the manager unit-testable without
+  a running switch.
+- **DRT initialized all-INVALID**: Packets to unrouted DPIDs are dropped, not silently
+  misrouted to port 0.
+
+---
+
+#### `pbr_switch_router.py` — NEW
+**Why**: The data plane engine (classify → encapsulate → route → decapsulate) does not
+fit inside any existing component. `VirtualSwitch` handles HBR routing via vPPB
+bindings; PBR routing is DRT-based and needs its own async task loop.
+
+**Key design choices**:
+- Inherits `RunnableComponent` for consistent lifecycle management
+- One `asyncio.Task` per physical port watching for incoming packets
+- Calls `PbrHdmDecoderManager.lookup_dpid()` for HBR→PBR address classification
+- Zero-copy path via `_inner_packet` stash on decapsulation
+
+---
+
+### 12.3 CCI Command Layer
+
+#### `opencis/cxl/cci/common.py` — MODIFIED
+**Why**: `CCI_FM_API_COMMAND_OPCODE` is the registry of all CXL FM API command opcodes.
+Without adding the 6 PBR opcodes, the `MctpCciExecutor` dispatch loop logs "Unknown
+Command" for every PBR packet — making debugging impossible. The range check in
+`get_opcode_string()` was also extended to cover through `SET_DRT (0x5709)`.
+
+---
+
+#### Six CCI command files — NEW
+**Why one file per command**: Follows the existing pattern established by `bind_vppb.py`,
+`get_physical_port_state.py` etc.:
+1. Keeps PRs reviewable — each file is ~100–165 lines
+2. Matches spec structure — one section per command in §7.7.13
+3. Enables independent unit testing per command
+
+**Why `ConfigurePidBindingCommand` is `CciBackgroundCommand`** (not foreground):
+CXL spec §7.7.13.7 explicitly mandates this — binding requires Hot Reset → Detect → L0
+link-state transitions that cannot complete synchronously within a single CCI request.
+
+Each file contains a request payload dataclass with `dump()`/`parse()`, a response
+payload dataclass where applicable, the command class, and static `create_cci_request()`
+/ `parse_response_payload()` helpers for the client side.
+
+---
+
+### 12.4 FM Integration Layer
+
+#### `mctp_cci_api_client.py` — MODIFIED
+**Why**: `MctpCciApiClient` is the FM-side client that sends CCI commands over MCTP TCP
+and awaits responses. Every command the FM can issue needs a corresponding typed async
+method — this is the contract between the FM application layer and the transport layer.
+
+Added 6 async methods following the **identical pattern** of existing methods
+(`bind_vppb()`, `get_virtual_cxl_switch_info()` etc.).
+
+**Alternative rejected**: A single generic `send_pbr_command(opcode, data)` method.
+Rejected — typed methods provide IDE autocomplete, type-checker support, and
+self-documenting code.
+
+---
+
+#### `socketio_server.py` — MODIFIED
+**Why**: The FM CLI communicates with opencis-core exclusively through Socket.IO events.
+Without adding the 6 `pbr:*` events, there is no way for a QEMU host or external FM
+tool to invoke any PBR command, even if the switch supports them over MCTP.
+
+**What added**:
+- 6 new event registrations (`pbr:identify`, `pbr:configurePid`, `pbr:getPidBinding`,
+  `pbr:configurePidBinding`, `pbr:getDrt`, `pbr:setDrt`)
+- 6 handler methods: translate incoming JSON dict → typed payload → `MctpCciApiClient`
+  method → serialize response back to JSON
+- 6 dispatch branches in `_handle_event()`
+
+**Key design choice**: JSON field names use camelCase (`drtIndex`, `entryType`) to
+match JavaScript/Socket.IO client conventions. Python dataclasses use snake_case
+internally. The handler methods perform this translation at the boundary.
+
+---
+
+#### `cxl_switch.py` — MODIFIED
+**Why**: `CxlSwitch` is the top-level application class that wires all components
+together. To make PBR commands reachable over MCTP, the 6 `CciCommand` instances must
+be registered with `MctpCciExecutor` via `register_cci_commands()`. Without this step,
+the executor returns "Unsupported" for all PBR opcodes regardless of what was implemented.
+
+**Key design choice**: `enable_pbr: bool = False` opt-in flag — all existing VSM-based
+topology configs continue to work unchanged. Switches without PBR hardware return
+"Unsupported" for PBR opcodes, not silently accept them.
+
+**Alternative rejected**: Always register PBR commands. Rejected — capabilities should
+be opt-in; blind registration could cause unexpected behavior on HBR-only switches.

@@ -433,13 +433,18 @@ class MctpCciApiClient(RunnableComponent):
         return (return_code, response)
 
     async def configure_pid_binding(
-        self, request: ConfigurePidBindingRequestPayload
+        self, request: ConfigurePidBindingRequestPayload, wait_for_completion: bool = False
     ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
         response_message_packet = await self._send_cci_command(
             ConfigurePidBindingCommand.create_cci_request, request
         )
         return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
-        if return_code != CCI_RETURN_CODE.SUCCESS:
+        if wait_for_completion:
+            return_code = await self._wait_for_background_operation()
+        if return_code not in (
+            CCI_RETURN_CODE.SUCCESS,
+            CCI_RETURN_CODE.BACKGROUND_COMMAND_STARTED,
+        ):
             return (return_code, None)
         return (return_code, return_code)
 

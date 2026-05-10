@@ -3,7 +3,7 @@ import asyncio
 
 from opencis.cxl.component.pbr_switch_manager import PbrSwitchManager, DrtEntry, DrtEntryType
 from opencis.cxl.component.pbr_switch_router import PbrSwitchRouter
-from opencis.cxl.component.cxl_connection import FifoPair
+from opencis.pci.component.fifo_pair import FifoPair
 from opencis.cxl.component.hdm_decoder import (
     PbrHdmDecoderManager, HdmDecoderCapabilities, HDM_DECODER_COUNT,
     DecoderInfo, INTERLEAVE_GRANULARITY, INTERLEAVE_WAYS,

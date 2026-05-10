@@ -1108,26 +1108,47 @@ class FabricManagerSocketIoServer(RunnableComponent):
 
     async def _pbr_get_pid_binding(self, data) -> CommandResponse:
         """
-        Expected data: {"pid": 0x123}
+        Expected data: {"targetVcs": 0, "targetVppb": 0}
+        Returns the PID currently bound to the given (vcs, vppb) pair.
         """
-        request = GetPidBindingRequestPayload(pid=data["pid"])
+        request = GetPidBindingRequestPayload(
+            target_vcs=data.get("targetVcs", 0),
+            target_vppb=data.get("targetVppb", 0),
+        )
         (return_code, response) = await self._mctp_client.get_pid_binding(request)
         if response:
             return CommandResponse(error="", result={
                 "pid": response.pid,
-                "boundPid": response.bound_pid,
-                "hmatEntryIndex": response.hmat_entry_index,
+                "latencyEntryBaseUnit": response.latency_entry_base_unit,
+                "latencyEntry": response.latency_entry,
+                "bwEntryBaseUnit": response.bw_entry_base_unit,
+                "bwEntry": response.bw_entry,
             })
         return CommandResponse(error=return_code.name)
 
     async def _pbr_configure_pid_binding(self, data) -> CommandResponse:
         """
-        Expected data: {"pid": 0x123, "targetPid": 0x456, "hmatEntryIndex": 0}
+        Expected data:
+          {
+            "operation": 0,       # 0=Bind, 1=Unbind
+            "targetVcs": 0,       # VCS ID
+            "targetVppb": 0,      # vPPB index
+            "pid": 0x123,         # PID of remote binding target
+            "latencyEntryBaseUnit": 0,
+            "latencyEntry": 0,
+            "bwEntryBaseUnit": 0,
+            "bwEntry": 0
+          }
         """
         request = ConfigurePidBindingRequestPayload(
-            pid=data["pid"],
-            target_pid=data.get("targetPid", 0xFFF),
-            hmat_entry_index=data.get("hmatEntryIndex", 0),
+            operation=data.get("operation", 0),
+            target_vcs=data.get("targetVcs", 0),
+            target_vppb=data.get("targetVppb", 0),
+            pid=data.get("pid", 0xFFF),
+            latency_entry_base_unit=data.get("latencyEntryBaseUnit", 0),
+            latency_entry=data.get("latencyEntry", 0),
+            bw_entry_base_unit=data.get("bwEntryBaseUnit", 0),
+            bw_entry=data.get("bwEntry", 0),
         )
         (return_code, response) = await self._mctp_client.configure_pid_binding(request)
         if response is not None:

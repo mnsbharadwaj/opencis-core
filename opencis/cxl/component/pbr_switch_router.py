@@ -5,13 +5,14 @@ This software is licensed under the terms of the Revised BSD License.
 See LICENSE for details.
 """
 
+import asyncio
 from asyncio import gather, create_task
 from typing import List, cast, Optional
 
 from opencis.util.logger import logger
 from opencis.util.component import RunnableComponent
 from opencis.util.async_gatherer import AsyncGatherer
-from opencis.cxl.component.cxl_connection import FifoPair
+from opencis.pci.component.fifo_pair import FifoPair
 from opencis.cxl.component.pbr_switch_manager import PbrSwitchManager, DrtEntryType
 from opencis.cxl.component.hdm_decoder import PbrHdmDecoderManager
 from opencis.cxl.transport.packet_constants import SYSTEM_PAYLOAD_TYPE
@@ -33,105 +34,126 @@ class PbrSwitchRouter(RunnableComponent):
         pbr_switch_manager: PbrSwitchManager,
         port_fifos: List[FifoPair],
         hdm_decoder_manager: Optional[PbrHdmDecoderManager] = None,
+        port_types: Optional[List[bool]] = None,  # True = USP, False/None = DSP
     ):
         super().__init__()
         self._switch_id = switch_id
         self._pbr_switch_manager = pbr_switch_manager
         self._port_fifos = port_fifos
         self._hdm_decoder_manager = hdm_decoder_manager
+        # port_types[i] = True means port i is a USP (host writes to host_to_target).
+        # If None, all ports treated as DSP (device writes to target_to_host).
+        self._port_types = port_types or [False] * len(port_fifos)
         self._routing_tasks = AsyncGatherer()
         self._is_running = False
 
     def _create_message(self, message):
         return f"[PbrSwitchRouter:Switch{self._switch_id}] {message}"
 
-    async def _process_port_ingress(self, ingress_port_id: int, fifo: FifoPair):
+    async def _process_port_ingress(self, ingress_port_id: int, fifo: "FifoPair"):
         """
-        Listen to incoming packets on a specific port.
-        Since physical ports can be upstream or downstream, we might receive packets
-        on `host_to_target` or `target_to_host`. 
-        For simplicity, we listen to `host_to_target` from DSPs and `target_to_host` from USPs,
-        or we assume the caller provides a unified incoming queue.
-        Assuming `fifo.host_to_target` represents packets entering the switch from this port.
+        Listens on target_to_host (device → switch direction, e.g. DSP GFD → switch).
+        Routes the packet and writes decapsulated output to egress port's host_to_target.
         """
         while True:
-            # We assume packets entering the switch from this port are put into `host_to_target`
-            # Wait, in CXLConnection, host writes to host_to_target, target reads from it.
-            # If the switch port is a DSP, the connected device is a target. The target writes to `target_to_host`.
-            # We need to listen to the correct direction based on the port role.
-            # For now, let's just listen to target_to_host since we act as the Host to the DSPs.
-            # Actually, we should be passed an Ingress Queue and Egress Queue by the connection manager.
             packet = await fifo.target_to_host.get()
             if packet is None:
                 break
-            
-            await self._route_packet(ingress_port_id, packet)
+            await self._route_packet(ingress_port_id, packet, egress_direction="host_to_target")
 
+    async def _process_port_host_ingress(self, ingress_port_id: int, fifo: "FifoPair"):
+        """
+        Listens on host_to_target (USP/host → switch direction).
 
+        The host writes commands to host_to_target on the USP port.
+        The router reads them, resolves via DRT, and delivers to the egress DSP
+        device port's host_to_target (the device reads from host_to_target).
+        Both directions write to host_to_target at egress so that the DSP's
+        target_to_host listener does not create a routing loop.
+        """
+        while True:
+            packet = await fifo.host_to_target.get()
+            if packet is None:
+                break
+            await self._route_packet(ingress_port_id, packet, egress_direction="host_to_target")
 
-    async def _route_packet(self, ingress_port_id: int, packet: BasePacket):
+    async def _route_packet(
+        self,
+        ingress_port_id: int,
+        packet: BasePacket,
+        egress_direction: str = "host_to_target",
+    ):
         base_packet = cast(BasePacket, packet)
-        logger.debug(self._create_message(f"Checking packet type: is_pbr={base_packet.is_pbr()} payload_type={base_packet.system_header.payload_type}"))
-        
-        # 1. PBR Decapsulation / Routing
+        logger.debug(self._create_message(
+            f"Checking packet type: is_pbr={base_packet.is_pbr()} "
+            f"payload_type={base_packet.system_header.payload_type}"
+        ))
+
+        # ── PBR packet: DRT lookup → decapsulate → forward ──────────────────
         if base_packet.is_pbr():
             pbr_packet = cast(PbrBasePacket, packet)
             dpid = pbr_packet.pbr_header.dpid
             spid = pbr_packet.pbr_header.spid
-            
-            logger.debug(self._create_message(f"Received PBR Packet: SPID=0x{spid:x}, DPID=0x{dpid:x}"))
-            
-            # 2. DRT Lookup (drt_index=0, start_entry=dpid, num_entries=1)
+
+            logger.debug(self._create_message(
+                f"Received PBR Packet: SPID=0x{spid:x}, DPID=0x{dpid:x}"
+            ))
+
             drt_result = self._pbr_switch_manager.get_drt(0, dpid, 1)
             if drt_result is None or not drt_result[0]:
-                logger.warning(self._create_message(f"Drop: DPID 0x{dpid:x} not found in DRT"))
+                logger.warning(self._create_message(
+                    f"Drop: DPID 0x{dpid:x} not found in DRT"
+                ))
                 return
-            
+
             drt_entry = drt_result[0][0]
             if drt_entry.entry_type != DrtEntryType.PHYSICAL_PORT:
-                logger.warning(self._create_message(f"Drop: DPID 0x{dpid:x} not valid in DRT"))
+                logger.warning(self._create_message(
+                    f"Drop: DPID 0x{dpid:x} DRT entry is not PHYSICAL_PORT"
+                ))
                 return
-                
+
             egress_port = drt_entry.routing_target
             if egress_port >= len(self._port_fifos):
-                logger.warning(self._create_message(f"Drop: Invalid egress port {egress_port}"))
+                logger.warning(self._create_message(
+                    f"Drop: Invalid egress port {egress_port}"
+                ))
                 return
-                
-            logger.debug(self._create_message(f"Routing DPID=0x{dpid:x} to port {egress_port}"))
 
-            target_fifo = self._port_fifos[egress_port]
+            logger.debug(self._create_message(
+                f"Routing DPID=0x{dpid:x} to port {egress_port} [{egress_direction}]"
+            ))
 
-            # Egress Decapsulation
-            # Prefer the stashed inner-packet object (set by PbrBasePacket.encapsulate).
-            # Fall back to reconstructing from raw bytes using BasePacket(payload=...).
+            # Decapsulate
             inner_packet = getattr(pbr_packet, "_inner_packet", None)
             if inner_packet is None:
                 payload_offset = pbr_packet.get_payload_offset()
                 raw_bytes = bytes(pbr_packet)
                 if len(raw_bytes) > payload_offset:
-                    inner_bytes = raw_bytes[payload_offset:]
                     try:
-                        inner_packet = BasePacket(inner_bytes)
+                        inner_packet = BasePacket(raw_bytes[payload_offset:])
                     except Exception as e:
-                        logger.warning(self._create_message(f"Failed to reconstruct inner packet: {e}"))
+                        logger.warning(self._create_message(
+                            f"Failed to reconstruct inner packet: {e}"
+                        ))
 
-            if inner_packet:
-                logger.debug(self._create_message(
-                    f"Decapsulated PBR packet, forwarding {type(inner_packet).__name__} to port {egress_port}"
-                ))
-                await target_fifo.host_to_target.put(inner_packet)
+            target_fifo = self._port_fifos[egress_port]
+            out_packet = inner_packet if inner_packet else pbr_packet
+            if egress_direction == "host_to_target":
+                await target_fifo.host_to_target.put(out_packet)
             else:
-                logger.warning(self._create_message("Inner packet not available, forwarding raw PBR packet"))
-                await target_fifo.host_to_target.put(pbr_packet)
+                await target_fifo.target_to_host.put(out_packet)
 
-
+        # ── HBR packet: look up DPID via HDM decoder → encapsulate → recurse ─
         else:
-            # HBR Packet Ingress: Needs Encapsulation
-            # The packet arrived without a PBR header. We must be an Ingress Edge Port.
-            logger.debug(self._create_message(f"Received HBR packet on port {ingress_port_id}"))
-            
+            logger.debug(self._create_message(
+                f"Received HBR packet on port {ingress_port_id}"
+            ))
+
             if not self._hdm_decoder_manager:
-                logger.warning(self._create_message("HBR-to-PBR encapsulation requires HDM Address Decoders. Dropping HBR packet."))
+                logger.warning(self._create_message(
+                    "HBR-to-PBR encapsulation requires HDM Address Decoders. Dropping."
+                ))
                 return
 
             address = None
@@ -140,36 +162,42 @@ class PbrSwitchRouter(RunnableComponent):
                 if hasattr(cxl_mem_packet, "get_address"):
                     address = cxl_mem_packet.get_address()
             elif base_packet.is_cxl_io():
-                # For testing and some MMIO
                 if isinstance(packet, CxlIoMemReqPacket) or hasattr(packet, "get_address"):
-                    cxl_io_packet = cast(CxlIoMemReqPacket, packet)
-                    address = cxl_io_packet.get_address()
+                    address = cast(CxlIoMemReqPacket, packet).get_address()
 
             if address is None:
-                logger.warning(self._create_message(f"Could not extract address from HBR packet {base_packet.get_type()}. Dropping."))
+                logger.warning(self._create_message(
+                    f"Could not extract address from HBR packet {base_packet.get_type()}. Dropping."
+                ))
                 return
-            
+
             dpid = self._hdm_decoder_manager.get_dpid(address)
             if dpid is None:
-                logger.warning(self._create_message(f"No DPID mapping found for address 0x{address:x}. Dropping."))
+                logger.warning(self._create_message(
+                    f"No DPID mapping for address 0x{address:x}. Dropping."
+                ))
                 return
 
-            # Find SPID for this port (mocking it as ingress_port_id for this standalone logic, 
-            # or looking it up in PbrSwitchManager)
-            # In opencis-core, bindings are to (vcs_id, vppb_id). 
-            # We'll use the port ID as a simplified SPID for now, or fetch from bindings.
-            spid = ingress_port_id 
-
-            logger.debug(self._create_message(f"Encapsulating HBR packet to DPID=0x{dpid:x}"))
+            spid = ingress_port_id
+            logger.debug(self._create_message(
+                f"Encapsulating HBR to DPID=0x{dpid:x}"
+            ))
             pbr_packet = PbrBasePacket.encapsulate(spid=spid, dpid=dpid, inner_packet=packet)
-
-            # Feed it back into the routing logic as a PBR packet
-            await self._route_packet(ingress_port_id, pbr_packet)
+            # Route the now-PBR packet through the same logic (will hit the PBR branch)
+            await self._route_packet(ingress_port_id, pbr_packet, egress_direction)
 
     async def _run(self):
         self._is_running = True
         for i, fifo in enumerate(self._port_fifos):
-            self._routing_tasks.add_task(self._process_port_ingress(i, fifo))
+            is_usp = self._port_types[i] if i < len(self._port_types) else False
+            if is_usp:
+                # USP: host writes to host_to_target → router reads and routes to DSP
+                # Output goes to egress DSP port's target_to_host (toward device)
+                self._routing_tasks.add_task(self._process_port_host_ingress(i, fifo))
+            else:
+                # DSP: device writes to target_to_host → router reads and routes to USP
+                # Output goes to egress USP port's host_to_target (toward host)
+                self._routing_tasks.add_task(self._process_port_ingress(i, fifo))
         await self._change_status_to_running()
         await self._routing_tasks.wait_for_completion()
 
@@ -177,3 +205,4 @@ class PbrSwitchRouter(RunnableComponent):
         for fifo in self._port_fifos:
             await fifo.host_to_target.put(None)
             await fifo.target_to_host.put(None)
+

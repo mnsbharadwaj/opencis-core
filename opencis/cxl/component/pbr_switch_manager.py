@@ -225,6 +225,14 @@ class PbrSwitchManager:
     # ------------------------------------------------------------------
 
     def get_identify_info(self) -> PbrSwitchInfo:
+        """
+        Return switch capability info.
+
+        num_drts is derived from the *actual* DRT table list so the response
+        is always consistent with the real state — even if _switch_info was
+        constructed or mutated independently.
+        """
+        self._switch_info.num_drts = len(self._drt_tables)
         return self._switch_info
 
     # ------------------------------------------------------------------
@@ -254,11 +262,14 @@ class PbrSwitchManager:
             logger.error(f"[{self._label}] assign_pid: PID {pid:#05x} out of range")
             return CCI_RETURN_CODE.INVALID_INPUT
 
-        # Validate target_id
-        matching = [t for t in self._pid_targets if t.target_id == target_id]
-        if not matching:
-            logger.error(f"[{self._label}] assign_pid: target_id {target_id} not found")
-            return CCI_RETURN_CODE.INVALID_INPUT
+        # Validate target_id only when an explicit pid_targets list was configured.
+        # When the list is empty (open mode — FM manages targets externally), skip
+        # validation and allow any target_id.
+        if self._pid_targets:
+            matching = [t for t in self._pid_targets if t.target_id == target_id]
+            if not matching:
+                logger.error(f"[{self._label}] assign_pid: target_id {target_id} not found")
+                return CCI_RETURN_CODE.INVALID_INPUT
 
         # PID already assigned to a *different* target?
         if pid in self._pid_assignments:
@@ -280,10 +291,10 @@ class PbrSwitchManager:
         return CCI_RETURN_CODE.SUCCESS
 
     def clear_pid(self, pid: int, target_id: int, instance_id: int) -> CCI_RETURN_CODE:
-        """Remove a PID assignment."""
+        """Remove a PID assignment. Idempotent — clears even if not tracked."""
         if pid not in self._pid_assignments:
-            logger.error(f"[{self._label}] clear_pid: PID {pid:#05x} not assigned")
-            return CCI_RETURN_CODE.INVALID_INPUT
+            logger.debug(f"[{self._label}] clear_pid: PID {pid:#05x} not in assignment map (already clear)")
+            return CCI_RETURN_CODE.SUCCESS   # idempotent
 
         del self._pid_assignments[pid]
         for t in self._pid_targets:

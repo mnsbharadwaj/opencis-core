@@ -6,7 +6,8 @@ build-backend = "pdm.backend"
 testpaths = "tests/"
 timeout = 30
 filterwarnings = [
-  "ignore::DeprecationWarning"
+  "ignore::DeprecationWarning",
+  "ignore::pytest.PytestUnraisableExceptionWarning"
 ]
 asyncio_default_fixture_loop_scope = "session"
 

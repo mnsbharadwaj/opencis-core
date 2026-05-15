@@ -91,6 +91,7 @@ class CxlSwitchConfig:
     mctp_port: int = 8100
     run_as_child: bool = False
     enable_pbr: bool = False
+    hdm_decoder_capabilities: Optional[dict] = None
 
 
 class CxlSwitch(RunnableComponent):
@@ -148,19 +149,22 @@ class CxlSwitch(RunnableComponent):
             # Initialised with a single decoder slot; the FM CLI programs it via
             # pbr:setDrt / future pbr:setHdmDecoder command, or it can be pre-committed
             # by the launch script.
-            _pbr_hdm_caps: HdmDecoderCapabilities = {
-                "decoder_count": HDM_DECODER_COUNT.DECODER_1,
-                "target_count": 1,
-                "a11to8_interleave_capable": 0,
-                "a14to12_interleave_capable": 0,
-                "poison_on_decoder_error_capability": 0,
-                "three_six_twelve_way_interleave_capable": 0,
-                "sixteen_way_interleave_capable": 0,
-                "uio_capable": 0,
-                "uio_capable_decoder_count": 0,
-                "mem_data_nxm_capable": 0,
-                "bi_capable": False,
-            }
+            if switch_config.hdm_decoder_capabilities is not None:
+                _pbr_hdm_caps: HdmDecoderCapabilities = switch_config.hdm_decoder_capabilities
+            else:
+                _pbr_hdm_caps: HdmDecoderCapabilities = {
+                    "decoder_count": HDM_DECODER_COUNT.DECODER_2,
+                    "target_count": 2,
+                    "a11to8_interleave_capable": 0,
+                    "a14to12_interleave_capable": 0,
+                    "poison_on_decoder_error_capability": 0,
+                    "three_six_twelve_way_interleave_capable": 0,
+                    "sixteen_way_interleave_capable": 0,
+                    "uio_capable": 0,
+                    "uio_capable_decoder_count": 0,
+                    "mem_data_nxm_capable": 0,
+                    "bi_capable": False,
+                }
             self._pbr_hdm_decoder_manager = PbrHdmDecoderManager(
                 _pbr_hdm_caps, label="PbrHdmDecoderManager"
             )

@@ -30,7 +30,9 @@ from opencis.apps.cxl_switch import CxlSwitch, CxlSwitchConfig      # noqa
 from opencis.apps.fabric_manager import CxlFabricManager              # noqa
 from opencis.apps.single_logical_device import SingleLogicalDevice    # noqa
 from opencis.apps.generic_fabric_device import GenericFabricDevice    # noqa
+from opencis.apps.cxl_simple_host import CxlSimpleHost                # noqa
 from opencis.cxl.component.physical_port_manager import PortConfig, PORT_TYPE  # noqa
+from opencis.cxl.component.hdm_decoder import DecoderInfo, INTERLEAVE_GRANULARITY, INTERLEAVE_WAYS  # noqa
 
 # ── ANSI colours ─────────────────────────────────────────────────────────────
 if sys.platform == "win32":
@@ -124,6 +126,30 @@ async def _run(args: argparse.Namespace) -> None:
     )
     switch = CxlSwitch(sw_config, device_configs=[])
 
+    # ── Pre-program HDM Decoder for Host Injection ───────────────────────────
+    # This allows a Host (Port 0) to send pure HBR packets. The Switch will
+    # translate Address 0x0 -> DPID 0x100, then encapsulate it into a PBR Flit.
+    if switch._pbr_hdm_decoder_manager:
+        # Decoder 0: Map 0x00000 to 0x100000 to Port 1 (DPID 0x100)
+        decoder_info_0 = DecoderInfo(
+            base=0x0,
+            size=args.mem_size,  # Assuming 256MB from args.mem_size
+            ig=INTERLEAVE_GRANULARITY.SIZE_256B,
+            iw=INTERLEAVE_WAYS.WAY_1,
+            target_ports=[0x100]  # Map base address to DPID 0x100
+        )
+        switch._pbr_hdm_decoder_manager.commit(0, decoder_info_0)
+
+        # Decoder 1: Map the next contiguous block to Port 2 (DPID 0x200)
+        decoder_info_1 = DecoderInfo(
+            base=args.mem_size,
+            size=args.mem_size,
+            ig=INTERLEAVE_GRANULARITY.SIZE_256B,
+            iw=INTERLEAVE_WAYS.WAY_1,
+            target_ports=[0x200]  # Map base address to DPID 0x200
+        )
+        switch._pbr_hdm_decoder_manager.commit(1, decoder_info_1)
+
     # ── SLD port 1 — Type-3 CXL memory device ────────────────────────────────
     sld = SingleLogicalDevice(
         memory_size=args.mem_size,
@@ -134,16 +160,12 @@ async def _run(args: argparse.Namespace) -> None:
         port_index=1,
     )
 
-    # ── SLD port 2 — second memory device (acts as "GFD" target in routing) ──
-    # GenericFabricDevice has no memory backing store — use a second SLD so the
-    # CLI can do independent write/read verification on both DSP ports.
-    sld2 = SingleLogicalDevice(
-        memory_size=args.mem_size,
-        memory_file=str(gfd_mem),
-        serial_number="0000000000000002",
+    # ── GFD port 2 — Generic Fabric Device ───────────────────────────────────
+    gfd = GenericFabricDevice(
         host="127.0.0.1",
         port=args.switch_port,
         port_index=2,
+        serial_number="0000000000000002",
     )
 
     # ── Start FM server first so the switch can connect ──────────────────────
@@ -156,18 +178,29 @@ async def _run(args: argparse.Namespace) -> None:
     await switch.wait_for_ready()
     print(f"{GREEN}[Env] Switch ready on :{args.switch_port}{RESET}")
 
-    # ── Start SLD and SLD2 — connect to switch ───────────────────────────────
-    sld_task    = asyncio.create_task(sld.run())
-    sld2_task   = asyncio.create_task(sld2.run())
-    await sld.wait_for_ready()
-    print(f"{GREEN}[Env] SLD  ready (port 1, memory: {sld_mem.name}){RESET}")
-    await sld2.wait_for_ready()
-    print(f"{GREEN}[Env] SLD2 ready (port 2, memory: {gfd_mem.name}){RESET}")
+    # ── Start Host on port 0 ─────────────────────────────────────────────────
+    host = CxlSimpleHost(
+        port_index=0,
+        switch_port=args.switch_port,
+        hm_mode=False,
+    )
+    host_task   = asyncio.create_task(host.run())
+    await host.wait_for_ready()
+    print(f"{GREEN}[Env] Host ready (port 0){RESET}")
 
-    print(f"\n{BOLD}{GREEN}All components up.  Run pbr_fm_cli.py to start testing.{RESET}")
+    # ── Start SLD and GFD — connect to switch ────────────────────────────────
+    sld_task    = asyncio.create_task(sld.run())
+    gfd_task    = asyncio.create_task(gfd.run())
+    
+    await sld.wait_for_ready()
+    print(f"{GREEN}[Env] SLD ready (port 1, memory: {sld_mem.name}){RESET}")
+    await gfd.wait_for_ready()
+    print(f"{GREEN}[Env] GFD ready (port 2){RESET}")
+
+    print(f"\n{BOLD}{GREEN}All components up. Run pbr_data_plane_injector.py to test host.{RESET}")
     print(f"{CYAN}Press Ctrl+C to stop.{RESET}\n")
 
-    await asyncio.gather(fm_task, sw_task, sld_task, sld2_task)
+    await asyncio.gather(fm_task, sw_task, host_task, sld_task, gfd_task)
 
 
 def main() -> None:

@@ -9,7 +9,7 @@ from asyncio import gather, create_task
 from dataclasses import dataclass, field
 import os
 import signal
-from typing import List
+from typing import List, Optional
 
 from opencis.pci.component.pci import SW_SWITCH_DID
 

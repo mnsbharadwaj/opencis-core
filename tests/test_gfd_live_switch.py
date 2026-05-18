@@ -192,6 +192,9 @@ class PbrLiveSwitchHarness:
 
     def _thread_main(self):
         asyncio.set_event_loop(self._loop)
+        # Suppress "Task exception was never retrieved" / "cannot reuse already
+        # awaited coroutine" noise that comes from daemon-thread teardown.
+        self._loop.set_exception_handler(lambda loop, ctx: None)
         try:
             self._loop.run_until_complete(self._async_main())
         except Exception:

@@ -291,10 +291,17 @@ class PbrSwitchManager:
         return CCI_RETURN_CODE.SUCCESS
 
     def clear_pid(self, pid: int, target_id: int, instance_id: int) -> CCI_RETURN_CODE:
-        """Remove a PID assignment. Idempotent — clears even if not tracked."""
+        """
+        Remove a PID assignment.
+
+        Spec (§7.7.13.5): Returns INVALID_INPUT if the PID is not currently
+        assigned (clearing an unassigned PID is not a valid operation).
+        """
         if pid not in self._pid_assignments:
-            logger.debug(f"[{self._label}] clear_pid: PID {pid:#05x} not in assignment map (already clear)")
-            return CCI_RETURN_CODE.SUCCESS   # idempotent
+            logger.error(
+                f"[{self._label}] clear_pid: PID {pid:#05x} not in assignment map"
+            )
+            return CCI_RETURN_CODE.INVALID_INPUT
 
         del self._pid_assignments[pid]
         for t in self._pid_targets:

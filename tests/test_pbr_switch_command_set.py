@@ -14,9 +14,6 @@ import asyncio
 import logging
 import pytest
 
-from opencis.util.logger import logger as opencis_logger
-
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE, CCI_RETURN_CODE
@@ -63,27 +60,6 @@ def run(coro):
     return resp
 
 
-@pytest.fixture(autouse=True)
-def log_test_execution(request):
-    opencis_logger.set_stdout_levels(loglevel="DEBUG")
-    logger.debug(f"=== Starting test: {request.node.name} ===")
-    yield
-    logger.debug(f"=== Finished test: {request.node.name} ===")
-    if hasattr(request.node, "rep_call"):
-        if request.node.rep_call.passed:
-            logger.debug(f"=== PASSED: {request.node.name} ===")
-        elif request.node.rep_call.failed:
-            logger.debug(f"=== FAILED: {request.node.name} ===")
-
-
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    # execute all other hooks to obtain the report object
-    outcome = yield
-    rep = outcome.get_result()
-    # set a report attribute for each phase of a call, which can
-    # be "setup", "call", "teardown"
-    setattr(item, "rep_" + rep.when, rep)
 
 
 # ===========================================================================

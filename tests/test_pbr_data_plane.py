@@ -13,10 +13,7 @@ from opencis.cxl.transport.pbr_packets import PbrBasePacket
 from opencis.cxl.transport.packet_constants import SYSTEM_PAYLOAD_TYPE
 from opencis.util.logger import logger
 
-@pytest.fixture(autouse=True)
-def log_test_execution(request):
-    logger.set_stdout_levels(loglevel="DEBUG")
-    yield
+
 
 @pytest.mark.asyncio
 async def test_pbr_data_plane_routing():

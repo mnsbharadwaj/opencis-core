@@ -223,8 +223,3 @@ CciMessageHeader = [
     ("vendor_specific_extended_status", 80, 16),
 ]
 
-PbrHeader = [
-    ("spid", 0, 12),
-    ("dpid", 12, 12),
-    ("reserved", 24, 8),
-]

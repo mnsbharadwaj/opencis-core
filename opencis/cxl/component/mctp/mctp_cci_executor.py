@@ -23,10 +23,6 @@ from opencis.cxl.component.cxl_component import (
     PortConfig,
 )
 from opencis.cxl.component.dsp_cci_tunnel import DspCciTunnel
-from opencis.cxl.cci.fabric_manager.gae.fabric_crawl_out import (
-    DspTunnelRegistry,
-    FabricCrawlOutCommand,
-)
 from opencis.cxl.transport.cci_packets import (
     CciMessagePacket,
     CciPayloadPacket,
@@ -41,6 +37,22 @@ from opencis.cxl.transport.packet_constants import CCI_MCTP_MESSAGE_CATEGORY
 
 from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE, CCI_RETURN_CODE, get_opcode_string
 from opencis.util.logger import logger
+
+
+class DspTunnelRegistry:
+    """Simple registry mapping DSP port index → DspCciTunnel."""
+
+    def __init__(self):
+        self._tunnels: dict = {}
+
+    def register(self, port_index: int, tunnel: "DspCciTunnel"):
+        self._tunnels[port_index] = tunnel
+
+    def get(self, port_index: int) -> Optional["DspCciTunnel"]:
+        return self._tunnels.get(port_index)
+
+    def all_tunnels(self) -> List["DspCciTunnel"]:
+        return list(self._tunnels.values())
 
 
 class MctpCciExecutor(RunnableComponent):
@@ -76,24 +88,18 @@ class MctpCciExecutor(RunnableComponent):
                 self._tunnel_registry.register(port_index, tunnel)
                 self._dsp_tunnels.append(tunnel)
 
-        # Register FabricCrawlOut so the FM can tunnel CCI to any DSP device
-        crawl_out_cmd = FabricCrawlOutCommand(self._tunnel_registry)
-        self._cci_executor.register_command(crawl_out_cmd.get_opcode(), crawl_out_cmd)
-
     def register_cci_commands(self, commands: List[CciCommand]):
         for command in commands:
             self._cci_executor.register_command(command.get_opcode(), command)
 
     def get_tunnel_registry(self) -> DspTunnelRegistry:
-        """
-        Return the DspTunnelRegistry so callers (e.g. FmMctpCciServer) can
-        bind individual tunnel instances into a GaeManager.
-        """
+        """Return the DspTunnelRegistry so callers can access DSP tunnels."""
         return self._tunnel_registry
 
     def get_tunnel(self, port_index: int) -> Optional[DspCciTunnel]:
         """Return the DspCciTunnel for a specific DSP port, or None."""
         return self._tunnel_registry.get(port_index)
+
 
     def _packet_to_request(self, packet: CciMessagePacket) -> CciRequest:
         return CciRequest(opcode=packet.cci_msg_header.command_opcode, payload=packet.get_payload())

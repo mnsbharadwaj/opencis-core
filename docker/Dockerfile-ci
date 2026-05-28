@@ -4,3 +4,9 @@ RUN apt update && \
     apt install git python3-pip python3.11-dev libpcap-dev -y
 
 RUN pip install uv==0.6.3
+
+# Remove any pre-compiled .so / .pyd files that may have been built on a
+# different OS, architecture, or Python version, which would cause imports to
+# fail. Python will automatically fall back to pure-Python implementations.
+RUN find . -name "*.so" -delete
+RUN find . -name "*.pyd" -delete

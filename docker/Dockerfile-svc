@@ -1,13 +1,24 @@
 FROM ubuntu:22.04
 
-EXPOSE 8000 8100 8200
+EXPOSE 8000 8100 8200 8300
 
 RUN apt update && \
     apt install -y python3-pip python3.11-dev libpcap-dev
+
 RUN pip install poetry==1.8.0
 
 WORKDIR /opencis-core
 COPY . /opencis-core
+
+# Remove any pre-compiled .so / .pyd files that may have been built on a
+# different OS, architecture, or Python version, which would cause imports to
+# fail. Python will automatically fall back to pure-Python implementations.
+RUN find /opencis-core -name "*.so" -delete
+RUN find /opencis-core -name "*.pyd" -delete
+
 RUN poetry env use 3.11 && poetry install
+
+# Verify that all key modules import cleanly in the built environment
+RUN poetry run python docker/smoke_test_imports.py
 
 ENTRYPOINT ["/bin/bash", "-c" , "poetry env info && ./cxl-util --help"]

@@ -76,12 +76,6 @@ from opencis.cxl.cci.fabric_manager.gae import (
 )
 from opencis.cxl.component.gae_manager import GaeManager
 from opencis.cxl.component.pbr_switch_manager import PbrSwitchManager
-from opencis.cxl.component.pbr_switch_router import PbrSwitchRouter
-from opencis.cxl.component.hdm_decoder import (
-    PbrHdmDecoderManager,
-    HdmDecoderCapabilities,
-    HDM_DECODER_COUNT,
-)
 from opencis.util.component import RunnableComponent
 from opencis.cxl.device.config.logical_device import (
     LogicalDeviceConfig,
@@ -150,6 +144,7 @@ class CxlSwitch(RunnableComponent):
         # PBR Switch Manager — only instantiated if enable_pbr=True
         self._pbr_switch_manager = PbrSwitchManager() if switch_config.enable_pbr else None
         self._pbr_switch_router = None
+        self._pbr_hdm_decoder_manager = None
         self._enable_pbr = switch_config.enable_pbr
 
         # GAE Manager — one per switch, tracks proxy threads and vPPB list
@@ -157,40 +152,6 @@ class CxlSwitch(RunnableComponent):
         self._gae_manager = (
             GaeManager(vppbs=[], label="Switch0:GAE") if switch_config.enable_pbr else None
         )
-
-        if switch_config.enable_pbr and self._pbr_switch_manager is not None:
-            # Gap 3 — HDM decoder manager: maps Host Physical Address → DPID at ingress.
-            # Initialised with a single decoder slot; the FM CLI programs it via
-            # pbr:setDrt / future pbr:setHdmDecoder command, or it can be pre-committed
-            # by the launch script.
-            if switch_config.hdm_decoder_capabilities is not None:
-                _pbr_hdm_caps: HdmDecoderCapabilities = switch_config.hdm_decoder_capabilities
-            else:
-                _pbr_hdm_caps: HdmDecoderCapabilities = {
-                    "decoder_count": HDM_DECODER_COUNT.DECODER_2,
-                    "target_count": 2,
-                    "a11to8_interleave_capable": 0,
-                    "a14to12_interleave_capable": 0,
-                    "poison_on_decoder_error_capability": 0,
-                    "three_six_twelve_way_interleave_capable": 0,
-                    "sixteen_way_interleave_capable": 0,
-                    "uio_capable": 0,
-                    "uio_capable_decoder_count": 0,
-                    "mem_data_nxm_capable": 0,
-                    "bi_capable": False,
-                }
-            self._pbr_hdm_decoder_manager = PbrHdmDecoderManager(
-                _pbr_hdm_caps, label="PbrHdmDecoderManager"
-            )
-            # Gap 1 — PbrSwitchRouter: data-plane engine, wired to physical-port FIFOs.
-            # get_port_fifos() is called lazily in _run() after PhysicalPortManager is ready.
-            self._pbr_switch_router = PbrSwitchRouter(
-                switch_id=0,
-                pbr_switch_manager=self._pbr_switch_manager,
-                port_fifos=self._physical_port_manager.get_port_fifos(),
-                hdm_decoder_manager=self._pbr_hdm_decoder_manager,
-                port_types=[pc.type == PORT_TYPE.USP for pc in switch_config.port_configs],
-            )
 
         self._start_mctp = start_mctp
         if self._start_mctp:
@@ -204,6 +165,7 @@ class CxlSwitch(RunnableComponent):
                 self._virtual_switch_manager,
             )
             self._initialize_mctp_endpoint()
+
 
         self._run_as_child = switch_config.run_as_child
 

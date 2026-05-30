@@ -256,21 +256,11 @@ class FmSmbusDualPortServer(RunnableComponent):
                 compute_pec=True,
             )
 
-            rc_color = (
-                "\033[92m" if return_code == 0
-                else "\033[93m" if return_code == 1
-                else "\033[91m"
-            )
-            print(
-                f"  \033[2m→ Queued response:\033[0m "
-                f"opcode=0x{req.cci_opcode:04X} "
-                f"rc={rc_color}{CCI_RETURN_CODE(return_code).name}\033[0m "
-                f"bg={is_background} "
-                f"payload={len(response_payload)}B "
-                f"frame={len(resp_frame)}B\n"
-            )
+            # ── Step 6: Print full response before queuing ───────────────
+            self._print_tx_response(resp_frame, req, return_code,
+                                    response_payload, is_background)
 
-            # ── Step 6: Push to response queue ───────────────────────────
+            # ── Step 7: Push to response queue ───────────────────────────
             await self._response_queue.put(resp_frame)
 
     # ── Response Server (port 8302) ───────────────────────────────────────────
@@ -409,6 +399,85 @@ class FmSmbusDualPortServer(RunnableComponent):
             print("\033[93m  ── CCI Payload ──────────────────────────────────────────\033[0m")
             print(self._hex_dump(req.cci_payload))
 
+        print(f"\033[1m{'─' * 62}\033[0m\n")
+
+    def _print_tx_response(
+        self,
+        resp_frame: bytes,
+        req: SmbusMctpRequest,
+        return_code: int,
+        response_payload: bytes,
+        is_background: bool,
+    ) -> None:
+        """Print the full outgoing response frame (hex + decoded fields) before queuing."""
+        rc_color = (
+            "\033[92m" if return_code == 0
+            else "\033[93m" if return_code == 1
+            else "\033[91m"
+        )
+        rc_name = CCI_RETURN_CODE(return_code).name
+        opcode_str = get_opcode_string(req.cci_opcode)
+
+        sep = "═" * 62
+        print(f"\n\033[1m\033[95m{sep}")
+        print(f"  SMBus+MCTP TX  [{len(resp_frame)} bytes]  resp-port {self._resp_port}")
+        print(f"{sep}\033[0m")
+
+        # Raw hex dump — always shown
+        print("\033[2m  Raw bytes:\033[0m")
+        print(self._hex_dump(resp_frame))
+
+        # ── SMBus response header ─────────────────────────────────────────
+        print("\033[93m  ── SMBus Response Header ────────────────────────────────\033[0m")
+        byte_count   = resp_frame[0]
+        fm_src_addr  = resp_frame[1]
+        print(f"    byte_count      : {byte_count}")
+        print(f"    fm_src_addr     : 0x{fm_src_addr:02X}  "
+              f"(i2c 0x{fm_src_addr >> 1:02X}, "
+              f"dir={'READ' if fm_src_addr & 1 else 'WRITE'})")
+
+        # ── MCTP transport header ─────────────────────────────────────────
+        print("\033[93m  ── MCTP Transport Header ────────────────────────────────\033[0m")
+        hdr_ver   = resp_frame[2]
+        dest_eid  = resp_frame[3]
+        src_eid   = resp_frame[4]
+        flags     = resp_frame[5]
+        som       = (flags >> 7) & 1
+        eom       = (flags >> 6) & 1
+        pkt_seq   = (flags >> 4) & 3
+        to        = (flags >> 3) & 1
+        msg_tag   = flags & 0x7
+        print(f"    hdr_ver    : 0x{hdr_ver:02X}")
+        print(f"    dest_eid   : 0x{dest_eid:02X}  (device)")
+        print(f"    src_eid    : 0x{src_eid:02X}  (FM)")
+        print(f"    SOM:{som}  EOM:{eom}  pkt_seq:{pkt_seq}  TO:{to}  msg_tag:{msg_tag}")
+
+        # ── MCTP message type ─────────────────────────────────────────────
+        msg_type_byte = resp_frame[6]
+        msg_type      = msg_type_byte & 0x7F
+        ic            = (msg_type_byte >> 7) & 1
+        msg_type_name = {
+            0x00: "MCTP_CONTROL", 0x7E: "CXL_FM_API", 0x7F: "VENDOR_DEFINED",
+        }.get(msg_type, f"UNKNOWN(0x{msg_type:02X})")
+
+        # ── CCI response header ───────────────────────────────────────────
+        print("\033[93m  ── MCTP Message / CCI Response Header ──────────────────\033[0m")
+        print(f"    IC         : {ic}  msg_type: 0x{msg_type:02X} ({msg_type_name})")
+        print(f"    category   : 1  (RESPONSE)")
+        print(f"    cci_tag    : {req.cci_tag}")
+        print(f"    opcode     : \033[1m0x{req.cci_opcode:04X}\033[0m  ({opcode_str})")
+        print(f"    return_code: {rc_color}{rc_name}\033[0m  (0x{return_code:04X})")
+        print(f"    background : {is_background}")
+        print(f"    payload    : {len(response_payload)} bytes")
+        if response_payload:
+            print("\033[93m  ── CCI Response Payload ─────────────────────────────────\033[0m")
+            print(self._hex_dump(response_payload))
+
+        # ── PEC ───────────────────────────────────────────────────────────
+        pec = resp_frame[-1]
+        print("\033[93m  ── PEC (CRC-8) ──────────────────────────────────────────\033[0m")
+        print(f"    pec        : 0x{pec:02X}")
+        print(f"\033[1m\033[95m  → Queuing to resp-port {self._resp_port} (QEMU SMBus Master)\033[0m")
         print(f"\033[1m{'─' * 62}\033[0m\n")
 
     # ── Error frame builder ───────────────────────────────────────────────────

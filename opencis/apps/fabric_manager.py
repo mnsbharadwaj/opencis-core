@@ -24,7 +24,7 @@ from opencis.cxl.component.fabric_manager.socketio_server import (
 )
 from opencis.cxl.component.short_msg_conn import ShortMsgConn
 from opencis.cxl.component.mctp.fm_mctp_cci_server import FmMctpCciServer
-from opencis.cxl.component.mctp.fm_smbus_mctp_server import FmSmbusMctpServer
+from opencis.cxl.component.mctp.fm_smbus_dual_port_server import FmSmbusDualPortServer
 from opencis.util.component import RunnableComponent
 from opencis.util.logger import logger
 
@@ -38,7 +38,8 @@ class CxlFabricManager(RunnableComponent):
         socketio_port: int = 8200,
         host_fm_conn_port: int = 8700,
         fm_mctp_cci_port: int = 8300,
-        fm_smbus_port: int = 8301,
+        fm_smbus_req_port: int = 8301,
+        fm_smbus_resp_port: int = 8302,
         fm_smbus_i2c_addr: int = 0x10,
         fm_smbus_verify_pec: bool = False,
         use_test_runner: bool = False,
@@ -97,30 +98,34 @@ class CxlFabricManager(RunnableComponent):
             "bridged to FM CLI path via shared MctpCciApiClient"
         ))
 
-        # Port 8301 — SMBus+MCTP adapter (DMTF DSP0237).
-        # For QEMU SMBus Slave / Master — speaks standard MCTP-over-SMBus.
-        # Prints every received packet before execution.
-        self._fm_smbus_mctp_server = FmSmbusMctpServer(
+        # Port 8301 (request) + Port 8302 (response) — SMBus dual-port adapter (DMTF DSP0237).
+        # Port 8301: QEMU SMBus Slave connects and sends SMBus+MCTP request frames.
+        # Port 8302: QEMU SMBus Master connects and receives SMBus+MCTP response frames.
+        # Shared asyncio.Queue decouples the two servers.
+        self._fm_smbus_dual_server = FmSmbusDualPortServer(
             host=mctp_host,
-            port=fm_smbus_port,
+            req_port=fm_smbus_req_port,
+            resp_port=fm_smbus_resp_port,
             mctp_client=self._api_client,
             fm_i2c_addr=fm_smbus_i2c_addr,
             verify_pec=fm_smbus_verify_pec,
         )
-        print(f"[FabricManager] FM SMBus+MCTP server    : port {fm_smbus_port}  (DSP0237 QEMU SMBus Slave/Master)")
         logger.info(self._create_message(
-            f"FM SMBus+MCTP server (port {fm_smbus_port}, "
-            f"i2c_addr=0x{fm_smbus_i2c_addr:02X}) "
-            "bridged to FM CLI path via shared MctpCciApiClient"
+            f"FM SMBus dual-port server: "
+            f"req={fm_smbus_req_port} (slave) resp={fm_smbus_resp_port} (master)"
         ))
 
     def get_fm_mctp_cci_port(self) -> int:
-        """Return the actual TCP port used by FmMctpCciServer (port 8300)."""
+        """Return TCP port of FmMctpCciServer (8300)."""
         return self._fm_mctp_cci_server.get_port()
 
-    def get_fm_smbus_port(self) -> int:
-        """Return the actual TCP port used by FmSmbusMctpServer (port 8301)."""
-        return self._fm_smbus_mctp_server.get_port()
+    def get_fm_smbus_req_port(self) -> int:
+        """Return TCP port where SMBus Slave sends requests (8301)."""
+        return self._fm_smbus_dual_server.get_req_port()
+
+    def get_fm_smbus_resp_port(self) -> int:
+        """Return TCP port where SMBus Master reads responses (8302)."""
+        return self._fm_smbus_dual_server.get_resp_port()
 
 
     def get_host_fm_port(self):
@@ -174,7 +179,7 @@ class CxlFabricManager(RunnableComponent):
             create_task(self._api_client.run()),
             create_task(self._host_fm_conn_server.run()),
             create_task(self._fm_mctp_cci_server.run()),
-            create_task(self._fm_smbus_mctp_server.run()),
+            create_task(self._fm_smbus_dual_server.run()),
         ]
         wait_tasks = [
             create_task(self._connection_manager.wait_for_ready()),
@@ -182,7 +187,7 @@ class CxlFabricManager(RunnableComponent):
             create_task(self._api_client.wait_for_ready()),
             create_task(self._host_fm_conn_server.wait_for_ready()),
             create_task(self._fm_mctp_cci_server.wait_for_ready()),
-            create_task(self._fm_smbus_mctp_server.wait_for_ready()),
+            create_task(self._fm_smbus_dual_server.wait_for_ready()),
         ]
         if self._use_test_runner:
             tasks.append(create_task(self._run_test()))
@@ -198,7 +203,7 @@ class CxlFabricManager(RunnableComponent):
             except Exception as e:
                 logger.warning(f"Error disconnecting from MLD process: {e}")
 
-        await self._fm_smbus_mctp_server.stop()
+        await self._fm_smbus_dual_server.stop()
         await self._fm_mctp_cci_server.stop()
         await self._host_fm_conn_server.stop()
         await self._connection_manager.stop()

@@ -371,13 +371,24 @@ class FmSmbusDualPortServer(RunnableComponent):
             try:
                 writer.write(resp_frame)
                 await writer.drain()
+                logger.info(self._create_message(
+                    f"Sent {len(resp_frame)}-byte response to SMBus Master"
+                ))
             except Exception as exc:
-                print(f"  [master] write/drain FAILED: {exc} -- master disconnected?")
-                logger.error(self._create_message(f"write/drain failed: {exc}"))
-                raise   # propagate -> _handle_master logs it and exits cleanly
-            logger.info(self._create_message(
-                f"Sent {len(resp_frame)}-byte response to SMBus Master"
-            ))
+                # QEMU uses per-request connections: master disconnects after
+                # each response.  If the socket is already closed when we try
+                # to write, put the frame BACK in the queue so the next master
+                # reconnect can deliver it instead of losing the response.
+                print(
+                    f"  [master] write/drain FAILED: {exc}\n"
+                    f"  [master] Re-queuing response for next master reconnect"
+                )
+                logger.warning(self._create_message(
+                    f"write/drain failed ({exc}), response re-queued"
+                ))
+                await self._response_queue.put(resp_frame)
+                break   # exit loop -- this writer is dead, _handle_master will
+                        # close it; next master connection starts fresh
 
     # -- FM CLI forwarding -----------------------------------------------------
 

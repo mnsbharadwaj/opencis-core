@@ -106,6 +106,9 @@ class FmSmbusDualPortServer(RunnableComponent):
         self._req_server_handle:  asyncio.AbstractServer | None = None
         self._resp_server_handle: asyncio.AbstractServer | None = None
 
+        # Diagnostic: set True while a master is connected on port 8302
+        self._master_connected: bool = False
+
         print(
             f"[FmSmbusDualPortServer] Request  port : {req_port}  "
             f"<- QEMU SMBus Slave (DSP0237 request frames)"
@@ -228,15 +231,19 @@ class FmSmbusDualPortServer(RunnableComponent):
         writer: asyncio.StreamWriter,
     ) -> None:
         """
-        Main loop for the Request Server.
+        Main loop for the Request Server (port 8301).
 
-        For each incoming SMBus+MCTP frame:
-          1. Read exactly one complete frame (length-delimited)
-          2. Print full packet breakdown (BEFORE any processing)
-          3. Parse SMBus header + MCTP header + CCI message
+        QEMU SMBus Slave connects here and sends SMBus+MCTP WRITE frames.
+        The response is pushed onto the shared queue for _process_master
+        (port 8302) to forward to the QEMU SMBus Master.
+
+        Steps per frame:
+          1. Read one complete length-delimited frame
+          2. Parse SMBus header + MCTP header + CCI message
+          3. Print full packet breakdown
           4. Forward CCI to FM CLI path via send_raw_cci()
           5. Build SMBus+MCTP response frame
-          6. Push response frame to shared queue -> Response Server sends it
+          6. Push to shared queue -> _process_master (port 8302) delivers it
         """
         while True:
             # -- Step 1: Read one complete SMBus+MCTP frame ---------------
@@ -291,18 +298,21 @@ class FmSmbusDualPortServer(RunnableComponent):
                 f"rc={rc_color}{CCI_RETURN_CODE(return_code).name}\033[0m "
                 f"bg={is_background} "
                 f"payload={len(response_payload)}B "
-                f"frame={len(resp_frame)}B\n"
+                f"frame={len(resp_frame)}B"
             )
 
-            # -- Step 6: Push to response queue then YIELD ---------------------
-            # The 'await asyncio.sleep(0)' explicitly yields control to the event
-            # loop after putting the frame in the queue.  Without this yield,
-            # the _handle_master coroutine may not get scheduled until _process_slave
-            # loops back to 'await read_smbus_frame()'.  On a slow/loaded VDI the
-            # event loop may take many milliseconds to reschedule, causing the
-            # test's receive timeout to fire before the frame reaches the Master.
+            # -- Step 6: Push to response queue ----------------------------
+            # _process_master (port 8302) drains this queue and sends the
+            # frame to the QEMU SMBus Master.
             await self._response_queue.put(resp_frame)
-            await asyncio.sleep(0)   # yield -> let _process_master drain the queue
+            qsize = self._response_queue.qsize()
+            print(f"  [queue] size after put: {qsize}  "
+                  f"(master_connected: {self._master_connected})\n")
+            logger.debug(self._create_message(
+                f"Response queued, queue size={qsize}, "
+                f"master_connected={self._master_connected}"
+            ))
+            await asyncio.sleep(0)   # yield -> let _process_master drain
 
     # -- Response Server (port 8302) -------------------------------------------
 
@@ -314,6 +324,7 @@ class FmSmbusDualPortServer(RunnableComponent):
         """Called for each SMBus Master connection on port 8302."""
         peer = writer.get_extra_info("peername", "unknown")
         logger.info(self._create_message(f"SMBus Master connected: {peer}"))
+        self._master_connected = True
         try:
             await self._process_master(writer)
         except asyncio.CancelledError:
@@ -321,6 +332,7 @@ class FmSmbusDualPortServer(RunnableComponent):
         except Exception as exc:
             logger.warning(self._create_message(f"SMBus Master {peer} error: {exc}"))
         finally:
+            self._master_connected = False
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -330,19 +342,32 @@ class FmSmbusDualPortServer(RunnableComponent):
 
     async def _process_master(self, writer: asyncio.StreamWriter) -> None:
         """
-        Main loop for the Response Server.
+        Main loop for the Response Server (port 8302).
 
         Blocks on the shared response queue. Each frame popped from the
-        queue is a complete DSP0237 response frame ready to be sent.
-        An empty bytes sentinel (b"") signals shutdown.
+        queue is a complete DSP0237 response frame delivered to the
+        QEMU SMBus Master.  An empty bytes sentinel (b"") signals shutdown.
         """
+        logger.info(self._create_message(
+            "_process_master started — waiting for responses on queue"
+        ))
+        print(f"  [master] _process_master started on port {self._resp_port}")
         while True:
+            logger.debug(self._create_message("Waiting on response queue..."))
             resp_frame = await self._response_queue.get()
             if not resp_frame:   # shutdown sentinel
+                logger.info(self._create_message("Got shutdown sentinel, exiting"))
                 break
+            print(
+                f"  \033[2m-> TX response:\033[0m "
+                f"{len(resp_frame)}B -> master port {self._resp_port}\n"
+            )
+            logger.debug(self._create_message(
+                f"Dequeued {len(resp_frame)}-byte frame, calling writer.write()"
+            ))
             writer.write(resp_frame)
             await writer.drain()
-            logger.debug(self._create_message(
+            logger.info(self._create_message(
                 f"Sent {len(resp_frame)}-byte response to SMBus Master"
             ))
 

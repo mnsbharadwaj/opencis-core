@@ -329,11 +329,13 @@ class FmSmbusDualPortServer(RunnableComponent):
         try:
             await self._process_master(writer)
         except asyncio.CancelledError:
-            pass
+            print(f"  [master] _process_master CANCELLED (peer={peer})")
         except Exception as exc:
+            print(f"  [master] _process_master ERROR: {exc}  (peer={peer})")
             logger.warning(self._create_message(f"SMBus Master {peer} error: {exc}"))
         finally:
             self._master_connected = False
+            print(f"  [master] _process_master EXITED -- master_connected=False")
             try:
                 writer.close()
                 await writer.wait_closed()
@@ -366,8 +368,13 @@ class FmSmbusDualPortServer(RunnableComponent):
             logger.debug(self._create_message(
                 f"Dequeued {len(resp_frame)}-byte frame -- calling writer.write()"
             ))
-            writer.write(resp_frame)
-            await writer.drain()
+            try:
+                writer.write(resp_frame)
+                await writer.drain()
+            except Exception as exc:
+                print(f"  [master] write/drain FAILED: {exc} -- master disconnected?")
+                logger.error(self._create_message(f"write/drain failed: {exc}"))
+                raise   # propagate -> _handle_master logs it and exits cleanly
             logger.info(self._create_message(
                 f"Sent {len(resp_frame)}-byte response to SMBus Master"
             ))

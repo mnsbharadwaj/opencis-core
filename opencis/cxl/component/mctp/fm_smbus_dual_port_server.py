@@ -4,20 +4,20 @@ Copyright (c) 2024-2025, Eeum, Inc.
 This software is licensed under the terms of the Revised BSD License.
 See LICENSE for details.
 
-fm_smbus_dual_port_server.py — Dual-port SMBus+MCTP CCI Server
+fm_smbus_dual_port_server.py ΓÇö Dual-port SMBus+MCTP CCI Server
 ================================================================
 
 Architecture
 ------------
 
-  QEMU SMBus Slave  ──TCP:8301──►  Request Server
-                                       │ depacketize SMBus+MCTP
-                                       │ extract CCI opcode + payload
-                                       │ send_raw_cci(opcode, payload)
-                                       │ build SMBus+MCTP response
-                                       │ push to asyncio.Queue
-                                   Response Server  ──TCP:8302──►  QEMU SMBus Master
-                                       └ drains Queue, writes to Master socket
+  QEMU SMBus Slave  ΓöÇΓöÇTCP:8301ΓöÇΓöÇΓû║  Request Server
+                                       Γöé depacketize SMBus+MCTP
+                                       Γöé extract CCI opcode + payload
+                                       Γöé send_raw_cci(opcode, payload)
+                                       Γöé build SMBus+MCTP response
+                                       Γöé push to asyncio.Queue
+                                   Response Server  ΓöÇΓöÇTCP:8302ΓöÇΓöÇΓû║  QEMU SMBus Master
+                                       Γöö drains Queue, writes to Master socket
 
 Key design decisions
 --------------------
@@ -57,9 +57,9 @@ class FmSmbusDualPortServer(RunnableComponent):
 
     Port ``req_port``  (default 8301):
         Listens for SMBus+MCTP request frames from the QEMU SMBus Slave.
-        Depacketizes frame → extracts CCI opcode + payload →
-        forwards to the FM CLI path (same MctpCciApiClient as port 8200) →
-        builds SMBus+MCTP response frame → puts it in the shared response queue.
+        Depacketizes frame ΓåÆ extracts CCI opcode + payload ΓåÆ
+        forwards to the FM CLI path (same MctpCciApiClient as port 8200) ΓåÆ
+        builds SMBus+MCTP response frame ΓåÆ puts it in the shared response queue.
 
     Port ``resp_port`` (default 8302):
         Listens for a connection from the QEMU SMBus Master.
@@ -70,10 +70,10 @@ class FmSmbusDualPortServer(RunnableComponent):
     -----
     ::
 
-        # Terminal 1 – start FM + Switch
+        # Terminal 1 ΓÇô start FM + Switch
         python run_pbr_env.py
 
-        # Terminal 2 – test client (sends on 8301, reads on 8302)
+        # Terminal 2 ΓÇô test client (sends on 8301, reads on 8302)
         python tests/test_smbus_dual_port_client.py
     """
 
@@ -94,25 +94,25 @@ class FmSmbusDualPortServer(RunnableComponent):
         self._fm_i2c_addr = fm_i2c_addr
         self._verify_pec = verify_pec
 
-        # Shared queue: Request Server → Response Server
-        # Items are complete DSP0237 response frame bytes.
-        self._response_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        # NOTE: asyncio primitives MUST be created inside the running event loop,
+        # i.e. inside _run(), NOT here in __init__.
+        # Creating them in __init__ (before the loop starts) assigns them to the
+        # wrong loop on Python 3.10+ and causes wait() to never unblock.
+        self._response_queue: asyncio.Queue[bytes] | None = None
+        self._req_ready:  asyncio.Event | None = None
+        self._resp_ready: asyncio.Event | None = None
 
-        # asyncio server handles
-        self._req_server_handle: Optional[asyncio.AbstractServer] = None
-        self._resp_server_handle: Optional[asyncio.AbstractServer] = None
-
-        # Ready events (one per sub-server)
-        self._req_ready = asyncio.Event()
-        self._resp_ready = asyncio.Event()
+        # asyncio server handles (set in _run)
+        self._req_server_handle:  asyncio.AbstractServer | None = None
+        self._resp_server_handle: asyncio.AbstractServer | None = None
 
         print(
             f"[FmSmbusDualPortServer] Request  port : {req_port}  "
-            f"← QEMU SMBus Slave (DSP0237 request frames)"
+            f"<- QEMU SMBus Slave (DSP0237 request frames)"
         )
         print(
             f"[FmSmbusDualPortServer] Response port : {resp_port}  "
-            f"→ QEMU SMBus Master (DSP0237 response frames)"
+            f"-> QEMU SMBus Master (DSP0237 response frames)"
         )
 
     # ── Bind helpers ──────────────────────────────────────────────────────────
@@ -122,14 +122,29 @@ class FmSmbusDualPortServer(RunnableComponent):
         self._mctp_client = client
 
     def get_req_port(self) -> int:
+        """Return actual bound request port (works with port=0 for tests)."""
+        if self._req_server_handle:
+            return self._req_server_handle.sockets[0].getsockname()[1]
         return self._req_port
 
     def get_resp_port(self) -> int:
+        """Return actual bound response port (works with port=0 for tests)."""
+        if self._resp_server_handle:
+            return self._resp_server_handle.sockets[0].getsockname()[1]
         return self._resp_port
 
     # ── RunnableComponent lifecycle ──────────────────────────────────────────
 
     async def _run(self) -> None:
+        # ── FIX: create asyncio primitives INSIDE the running event loop ──────
+        # asyncio.Event() and asyncio.Queue() must be created here, not in
+        # __init__, so they are bound to the correct loop.  Creating them in
+        # __init__ (synchronously, before the loop starts) causes wait() to
+        # silently block forever on some Python / OS combinations.
+        self._response_queue = asyncio.Queue()
+        self._req_ready      = asyncio.Event()
+        self._resp_ready     = asyncio.Event()
+
         self._req_server_handle = await asyncio.start_server(
             self._handle_slave,
             self._host,
@@ -140,6 +155,10 @@ class FmSmbusDualPortServer(RunnableComponent):
             self._host,
             self._resp_port,
         )
+
+        # Update stored ports to actual bound ports (important when port=0)
+        self._req_port  = self._req_server_handle.sockets[0].getsockname()[1]
+        self._resp_port = self._resp_server_handle.sockets[0].getsockname()[1]
 
         self._req_ready.set()
         self._resp_ready.set()
@@ -165,14 +184,19 @@ class FmSmbusDualPortServer(RunnableComponent):
         if self._resp_server_handle:
             self._resp_server_handle.close()
             await self._resp_server_handle.wait_closed()
-        # Unblock any waiting response server
-        await self._response_queue.put(b"")
+        # Unblock any waiting response server with shutdown sentinel
+        if self._response_queue:
+            await self._response_queue.put(b"")
 
     async def wait_for_ready(self) -> None:
+        # Spin-wait until _run() has created the events (handles the edge case
+        # where wait_for_ready is called before _run has been scheduled).
+        while self._req_ready is None or self._resp_ready is None:
+            await asyncio.sleep(0.01)
         await self._req_ready.wait()
         await self._resp_ready.wait()
 
-    # ── Request Server (port 8301) ────────────────────────────────────────────
+    # ΓöÇΓöÇ Request Server (port 8301) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     async def _handle_slave(
         self,
@@ -212,13 +236,13 @@ class FmSmbusDualPortServer(RunnableComponent):
           3. Parse SMBus header + MCTP header + CCI message
           4. Forward CCI to FM CLI path via send_raw_cci()
           5. Build SMBus+MCTP response frame
-          6. Push response frame to shared queue → Response Server sends it
+          6. Push response frame to shared queue ΓåÆ Response Server sends it
         """
         while True:
-            # ── Step 1: Read one complete SMBus+MCTP frame ───────────────
+            # ΓöÇΓöÇ Step 1: Read one complete SMBus+MCTP frame ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
             raw_frame = await read_smbus_frame(reader)
 
-            # ── Step 2: Parse ────────────────────────────────────────────
+            # ΓöÇΓöÇ Step 2: Parse ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
             try:
                 req = SmbusMctpRequest.parse(raw_frame, verify_pec=self._verify_pec)
             except ValueError as exc:
@@ -231,12 +255,12 @@ class FmSmbusDualPortServer(RunnableComponent):
                     await self._response_queue.put(err_frame)
                 continue
 
-            # ── Step 3: Print (BEFORE execution) ─────────────────────────
+            # ΓöÇΓöÇ Step 3: Print (BEFORE execution) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
             self._print_rx_packet(raw_frame, req)
 
             opcode_str = get_opcode_string(req.cci_opcode)
 
-            # ── Step 4: Forward CCI to FM CLI path ───────────────────────
+            # ΓöÇΓöÇ Step 4: Forward CCI to FM CLI path ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
             return_code, response_payload, is_background = \
                 await self._forward_to_cli(req.cci_opcode, req.cci_payload)
 
@@ -246,7 +270,7 @@ class FmSmbusDualPortServer(RunnableComponent):
                 f"bg={is_background} resp={len(response_payload)}B"
             ))
 
-            # ── Step 5: Build DSP0237 response frame ─────────────────────
+            # ΓöÇΓöÇ Step 5: Build DSP0237 response frame ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
             resp_frame = build_smbus_mctp_response(
                 request=req,
                 return_code=int(return_code),
@@ -256,14 +280,31 @@ class FmSmbusDualPortServer(RunnableComponent):
                 compute_pec=True,
             )
 
-            # ── Step 6: Print full response before queuing ───────────────
-            self._print_tx_response(resp_frame, req, return_code,
-                                    response_payload, is_background)
+            rc_color = (
+                "\033[92m" if return_code == 0
+                else "\033[93m" if return_code == 1
+                else "\033[91m"
+            )
+            print(
+                f"  \033[2mΓåÆ Queued response:\033[0m "
+                f"opcode=0x{req.cci_opcode:04X} "
+                f"rc={rc_color}{CCI_RETURN_CODE(return_code).name}\033[0m "
+                f"bg={is_background} "
+                f"payload={len(response_payload)}B "
+                f"frame={len(resp_frame)}B\n"
+            )
 
-            # ── Step 7: Push to response queue ───────────────────────────
+            # ── Step 6: Push to response queue then YIELD ─────────────────────
+            # The 'await asyncio.sleep(0)' explicitly yields control to the event
+            # loop after putting the frame in the queue.  Without this yield,
+            # the _handle_master coroutine may not get scheduled until _process_slave
+            # loops back to 'await read_smbus_frame()'.  On a slow/loaded VDI the
+            # event loop may take many milliseconds to reschedule, causing the
+            # test's receive timeout to fire before the frame reaches the Master.
             await self._response_queue.put(resp_frame)
+            await asyncio.sleep(0)   # yield → let _process_master drain the queue
 
-    # ── Response Server (port 8302) ───────────────────────────────────────────
+    # ΓöÇΓöÇ Response Server (port 8302) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     async def _handle_master(
         self,
@@ -305,7 +346,7 @@ class FmSmbusDualPortServer(RunnableComponent):
                 f"Sent {len(resp_frame)}-byte response to SMBus Master"
             ))
 
-    # ── FM CLI forwarding ─────────────────────────────────────────────────────
+    # ΓöÇΓöÇ FM CLI forwarding ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     async def _forward_to_cli(
         self,
@@ -320,7 +361,7 @@ class FmSmbusDualPortServer(RunnableComponent):
         """
         if self._mctp_client is None:
             logger.warning(self._create_message(
-                "No MctpCciApiClient bound — returning UNSUPPORTED"
+                "No MctpCciApiClient bound ΓÇö returning UNSUPPORTED"
             ))
             return int(CCI_RETURN_CODE.UNSUPPORTED), b"", False
 
@@ -332,7 +373,7 @@ class FmSmbusDualPortServer(RunnableComponent):
             ))
             return int(CCI_RETURN_CODE.INTERNAL_ERROR), b"", False
 
-    # ── Packet printer ────────────────────────────────────────────────────────
+    # ΓöÇΓöÇ Packet printer ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     @staticmethod
     def _hex_dump(data: bytes, indent: str = "    ") -> str:
@@ -353,7 +394,7 @@ class FmSmbusDualPortServer(RunnableComponent):
         parse_error: str = "",
     ) -> None:
         """Print full packet breakdown to stdout BEFORE any processing."""
-        sep = "═" * 62
+        sep = "ΓòÉ" * 62
         print(f"\n\033[1m\033[96m{sep}")
         print(f"  SMBus+MCTP RX  [{len(raw_frame)} bytes]  req-port {self._req_port}")
         print(f"{sep}\033[0m")
@@ -362,10 +403,10 @@ class FmSmbusDualPortServer(RunnableComponent):
 
         if parse_error:
             print(f"\033[91m  Parse ERROR: {parse_error}\033[0m")
-            print(f"\033[1m{'─' * 62}\033[0m\n")
+            print(f"\033[1m{'ΓöÇ' * 62}\033[0m\n")
             return
 
-        print("\033[93m  ── SMBus Header ─────────────────────────────────────────\033[0m")
+        print("\033[93m  ΓöÇΓöÇ SMBus Header ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ\033[0m")
         print(f"    dest_slave_addr : 0x{req.dest_slave_addr:02X}  "
               f"(i2c 0x{req.dest_slave_addr >> 1:02X}, "
               f"dir={'WRITE' if not (req.dest_slave_addr & 1) else 'READ'})")
@@ -375,7 +416,7 @@ class FmSmbusDualPortServer(RunnableComponent):
         print(f"    src_slave_addr  : 0x{req.src_slave_addr:02X}  "
               f"(i2c 0x{req.src_slave_addr >> 1:02X})")
 
-        print("\033[93m  ── MCTP Transport Header ────────────────────────────────\033[0m")
+        print("\033[93m  ΓöÇΓöÇ MCTP Transport Header ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ\033[0m")
         print(f"    hdr_ver    : 0x{req.hdr_ver:02X}")
         print(f"    dest_eid   : 0x{req.dest_eid:02X}  (FM)")
         print(f"    src_eid    : 0x{req.src_eid:02X}  (device)")
@@ -385,7 +426,7 @@ class FmSmbusDualPortServer(RunnableComponent):
         msg_type_name = {
             0x00: "MCTP_CONTROL", 0x7E: "CXL_FM_API", 0x7F: "VENDOR_DEFINED",
         }.get(req.msg_type, f"UNKNOWN(0x{req.msg_type:02X})")
-        print("\033[93m  ── MCTP Message / CCI Header ────────────────────────────\033[0m")
+        print("\033[93m  ΓöÇΓöÇ MCTP Message / CCI Header ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ\033[0m")
         print(f"    IC         : {req.ic}  msg_type: 0x{req.msg_type:02X} ({msg_type_name})")
         opcode_str = get_opcode_string(req.cci_opcode)
         print(f"    opcode     : \033[1m0x{req.cci_opcode:04X}\033[0m  ({opcode_str})")
@@ -396,91 +437,12 @@ class FmSmbusDualPortServer(RunnableComponent):
         print(f"    pec        : 0x{req.pec:02X}  [{pec_str}]")
 
         if req.cci_payload:
-            print("\033[93m  ── CCI Payload ──────────────────────────────────────────\033[0m")
+            print("\033[93m  ΓöÇΓöÇ CCI Payload ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ\033[0m")
             print(self._hex_dump(req.cci_payload))
 
-        print(f"\033[1m{'─' * 62}\033[0m\n")
+        print(f"\033[1m{'ΓöÇ' * 62}\033[0m\n")
 
-    def _print_tx_response(
-        self,
-        resp_frame: bytes,
-        req: SmbusMctpRequest,
-        return_code: int,
-        response_payload: bytes,
-        is_background: bool,
-    ) -> None:
-        """Print the full outgoing response frame (hex + decoded fields) before queuing."""
-        rc_color = (
-            "\033[92m" if return_code == 0
-            else "\033[93m" if return_code == 1
-            else "\033[91m"
-        )
-        rc_name = CCI_RETURN_CODE(return_code).name
-        opcode_str = get_opcode_string(req.cci_opcode)
-
-        sep = "═" * 62
-        print(f"\n\033[1m\033[95m{sep}")
-        print(f"  SMBus+MCTP TX  [{len(resp_frame)} bytes]  resp-port {self._resp_port}")
-        print(f"{sep}\033[0m")
-
-        # Raw hex dump — always shown
-        print("\033[2m  Raw bytes:\033[0m")
-        print(self._hex_dump(resp_frame))
-
-        # ── SMBus response header ─────────────────────────────────────────
-        print("\033[93m  ── SMBus Response Header ────────────────────────────────\033[0m")
-        byte_count   = resp_frame[0]
-        fm_src_addr  = resp_frame[1]
-        print(f"    byte_count      : {byte_count}")
-        print(f"    fm_src_addr     : 0x{fm_src_addr:02X}  "
-              f"(i2c 0x{fm_src_addr >> 1:02X}, "
-              f"dir={'READ' if fm_src_addr & 1 else 'WRITE'})")
-
-        # ── MCTP transport header ─────────────────────────────────────────
-        print("\033[93m  ── MCTP Transport Header ────────────────────────────────\033[0m")
-        hdr_ver   = resp_frame[2]
-        dest_eid  = resp_frame[3]
-        src_eid   = resp_frame[4]
-        flags     = resp_frame[5]
-        som       = (flags >> 7) & 1
-        eom       = (flags >> 6) & 1
-        pkt_seq   = (flags >> 4) & 3
-        to        = (flags >> 3) & 1
-        msg_tag   = flags & 0x7
-        print(f"    hdr_ver    : 0x{hdr_ver:02X}")
-        print(f"    dest_eid   : 0x{dest_eid:02X}  (device)")
-        print(f"    src_eid    : 0x{src_eid:02X}  (FM)")
-        print(f"    SOM:{som}  EOM:{eom}  pkt_seq:{pkt_seq}  TO:{to}  msg_tag:{msg_tag}")
-
-        # ── MCTP message type ─────────────────────────────────────────────
-        msg_type_byte = resp_frame[6]
-        msg_type      = msg_type_byte & 0x7F
-        ic            = (msg_type_byte >> 7) & 1
-        msg_type_name = {
-            0x00: "MCTP_CONTROL", 0x7E: "CXL_FM_API", 0x7F: "VENDOR_DEFINED",
-        }.get(msg_type, f"UNKNOWN(0x{msg_type:02X})")
-
-        # ── CCI response header ───────────────────────────────────────────
-        print("\033[93m  ── MCTP Message / CCI Response Header ──────────────────\033[0m")
-        print(f"    IC         : {ic}  msg_type: 0x{msg_type:02X} ({msg_type_name})")
-        print(f"    category   : 1  (RESPONSE)")
-        print(f"    cci_tag    : {req.cci_tag}")
-        print(f"    opcode     : \033[1m0x{req.cci_opcode:04X}\033[0m  ({opcode_str})")
-        print(f"    return_code: {rc_color}{rc_name}\033[0m  (0x{return_code:04X})")
-        print(f"    background : {is_background}")
-        print(f"    payload    : {len(response_payload)} bytes")
-        if response_payload:
-            print("\033[93m  ── CCI Response Payload ─────────────────────────────────\033[0m")
-            print(self._hex_dump(response_payload))
-
-        # ── PEC ───────────────────────────────────────────────────────────
-        pec = resp_frame[-1]
-        print("\033[93m  ── PEC (CRC-8) ──────────────────────────────────────────\033[0m")
-        print(f"    pec        : 0x{pec:02X}")
-        print(f"\033[1m\033[95m  → Queuing to resp-port {self._resp_port} (QEMU SMBus Master)\033[0m")
-        print(f"\033[1m{'─' * 62}\033[0m\n")
-
-    # ── Error frame builder ───────────────────────────────────────────────────
+    # ΓöÇΓöÇ Error frame builder ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     def _build_error_frame(self, raw_frame: bytes) -> bytes:
         """

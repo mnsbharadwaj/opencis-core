@@ -371,6 +371,7 @@ class FmSmbusDualPortServer(RunnableComponent):
             try:
                 writer.write(resp_frame)
                 await writer.drain()
+                self._print_tx_packet(resp_frame)
                 logger.info(self._create_message(
                     f"Sent {len(resp_frame)}-byte response to SMBus Master"
                 ))
@@ -485,6 +486,97 @@ class FmSmbusDualPortServer(RunnableComponent):
             print(self._hex_dump(req.cci_payload))
 
         print(f"\033[1m{'-' * 62}\033[0m\n")
+
+    def _print_tx_packet(self, resp_frame: bytes) -> None:
+        """Print full TX response packet breakdown to stdout — mirrors _print_rx_packet."""
+        if len(resp_frame) < 20:
+            print(f"\033[91m  [TX] Response frame too short ({len(resp_frame)} bytes)\033[0m")
+            return
+
+        sep = "=" * 62
+        print(f"\n\033[1m\033[92m{sep}")
+        print(f"  SMBus+MCTP TX  [{len(resp_frame)} bytes]  resp-port {self._resp_port}")
+        print(f"{sep}\033[0m")
+        print("\033[2m  Raw bytes:\033[0m")
+        print(self._hex_dump(resp_frame))
+
+        # -- SMBus response header (bytes 0-6) --
+        byte_count   = resp_frame[0]
+        fm_src_addr  = resp_frame[1]
+        hdr_ver      = resp_frame[2]
+        dest_eid     = resp_frame[3]
+        src_eid      = resp_frame[4]
+        flags        = resp_frame[5]
+        msg_type_raw = resp_frame[6]
+
+        som      = (flags >> 7) & 1
+        eom      = (flags >> 6) & 1
+        pkt_seq  = (flags >> 4) & 3
+        to_bit   = (flags >> 3) & 1
+        msg_tag  = flags & 0x7
+        ic       = (msg_type_raw >> 7) & 1
+        msg_type = msg_type_raw & 0x7F
+
+        print("\033[92m  -- SMBus Response Header --------------------------------\033[0m")
+        print(f"    byte_count      : {byte_count}  (payload bytes excl. PEC)")
+        print(f"    fm_src_addr     : 0x{fm_src_addr:02X}  "
+              f"(i2c 0x{fm_src_addr >> 1:02X}, "
+              f"dir={'READ' if fm_src_addr & 1 else 'WRITE'})")
+
+        print("\033[92m  -- MCTP Transport Header --------------------------------\033[0m")
+        print(f"    hdr_ver    : 0x{hdr_ver:02X}")
+        print(f"    dest_eid   : 0x{dest_eid:02X}  (device/QEMU)")
+        print(f"    src_eid    : 0x{src_eid:02X}  (FM)")
+        print(f"    SOM        : {som}  EOM: {eom}  "
+              f"pkt_seq: {pkt_seq}  TO: {to_bit}  msg_tag: {msg_tag}")
+
+        msg_type_name = {
+            0x00: "MCTP_CONTROL", 0x7E: "CXL_FM_API", 0x7F: "VENDOR_DEFINED",
+        }.get(msg_type, f"UNKNOWN(0x{msg_type:02X})")
+        print("\033[92m  -- MCTP Message / CCI Response Header -------------------\033[0m")
+        print(f"    IC         : {ic}  msg_type: 0x{msg_type:02X} ({msg_type_name})")
+
+        # -- CCI response header (bytes 7-18, 12 bytes) --
+        cci_hdr     = resp_frame[7:19]
+        category    = cci_hdr[0] & 0x0F
+        cci_tag     = cci_hdr[1]
+        opcode      = int.from_bytes(cci_hdr[3:5], "little")
+        plen        = int.from_bytes(cci_hdr[5:7], "little") | ((cci_hdr[7] & 0x1F) << 16)
+        is_bg       = bool(cci_hdr[7] >> 7)
+        return_code = int.from_bytes(cci_hdr[8:10], "little")
+        pec         = resp_frame[-1]
+        pec_expected = crc8_smbus(resp_frame[:-1])
+
+        cat_name = {0: "REQUEST", 1: "RESPONSE"}.get(category, f"UNKNOWN({category})")
+        opcode_str = get_opcode_string(opcode)
+        try:
+            rc_name = CCI_RETURN_CODE(return_code).name
+        except ValueError:
+            rc_name = f"UNKNOWN(0x{return_code:04X})"
+
+        rc_color = (
+            "\033[92m" if return_code == 0
+            else "\033[93m" if return_code == 1
+            else "\033[91m"
+        )
+        pec_str = "\033[92mOK\033[0m" if pec == pec_expected else "\033[91mBAD\033[0m"
+        bg_str  = "\033[93mYES (background)\033[0m" if is_bg else "no"
+
+        print(f"    category   : {category}  ({cat_name})")
+        print(f"    opcode     : \033[1m0x{opcode:04X}\033[0m  ({opcode_str})")
+        print(f"    cci_tag    : {cci_tag}")
+        print(f"    return_code: {rc_color}{rc_name}\033[0m  (0x{return_code:04X})")
+        print(f"    background : {bg_str}")
+        print(f"    payload    : {plen} bytes")
+        print(f"    pec        : 0x{pec:02X}  [{pec_str}]")
+
+        cci_payload = resp_frame[19:19 + plen]
+        if cci_payload:
+            print("\033[92m  -- CCI Response Payload ---------------------------------\033[0m")
+            print(self._hex_dump(cci_payload))
+
+        print(f"\033[1m{'-' * 62}\033[0m\n")
+
 
     # -- Error frame builder ---------------------------------------------------
 

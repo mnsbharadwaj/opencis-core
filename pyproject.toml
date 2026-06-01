@@ -5,6 +5,10 @@ build-backend = "pdm.backend"
 [tool.pytest.ini_options]
 testpaths = "tests/"
 timeout = 120
+# --capture=sys: only replaces sys.stdout/stderr (not the raw fd).
+# Allows packet-dump output written to sys.__stdout__ to appear on the
+# terminal without needing -s, while still capturing ordinary test prints.
+addopts = "--capture=sys"
 filterwarnings = [
   "ignore::DeprecationWarning",
   "ignore::pytest.PytestUnraisableExceptionWarning"

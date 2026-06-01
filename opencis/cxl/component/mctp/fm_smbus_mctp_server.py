@@ -27,6 +27,7 @@ CCI field layout reference: opencis/cxl/transport/fields.py
 
 import asyncio
 import struct
+import sys
 from asyncio import create_task, gather
 from typing import Optional, TYPE_CHECKING
 
@@ -44,6 +45,13 @@ from opencis.cxl.component.mctp.smbus_mctp_framing import (
 
 if TYPE_CHECKING:
     from opencis.cxl.component.mctp.mctp_cci_api_client import MctpCciApiClient
+
+
+def _p(*args, **kw):
+    """Print to sys.__stdout__ to bypass pytest stdout capture."""
+    out = getattr(sys, "__stdout__", None) or sys.stdout
+    kw.setdefault("flush", True)
+    print(*args, file=out, **kw)
 
 
 class FmSmbusMctpServer(RunnableComponent):
@@ -177,9 +185,9 @@ class FmSmbusMctpServer(RunnableComponent):
             ops     = payload[0] & 0x07
             op_name = {0: "ASSIGN", 1: "CLEAR_ALL", 2: "CLEAR_SPECIFIC"}.get(ops, f"UNKNOWN({ops})")
             num_tgt = struct.unpack_from("<H", payload, 2)[0]
-            print(f"{P}  [CCI-REQ] CONFIGURE_PID_ASSIGNMENT payload decoded:{R}")
-            print(f"    operation   : {ops}  ({op_name})")
-            print(f"    num_targets : {num_tgt}")
+            _p(f"{P}  [CCI-REQ] CONFIGURE_PID_ASSIGNMENT payload decoded:{R}")
+            _p(f"    operation   : {ops}  ({op_name})")
+            _p(f"    num_targets : {num_tgt}")
             for i in range(num_tgt):
                 off = 4 + i * 5
                 if off + 5 > len(payload):
@@ -187,15 +195,15 @@ class FmSmbusMctpServer(RunnableComponent):
                 pid      = struct.unpack_from("<H", payload, off)[0] & 0x0FFF
                 tgt_id   = struct.unpack_from("<H", payload, off + 2)[0]
                 inst_id  = payload[off + 4]
-                print(f"    entry[{i}]    : pid=0x{pid:03X}  target_port={tgt_id}  instance={inst_id}")
+                _p(f"    entry[{i}]    : pid=0x{pid:03X}  target_port={tgt_id}  instance={inst_id}")
 
         # --- GET_PID_BINDING (0x5705) ---
         elif opcode == 0x5705:
             if len(payload) < 2:
                 return
-            print(f"{P}  [CCI-REQ] GET_PID_BINDING payload decoded:{R}")
-            print(f"    target_vcs  : {payload[0]}  (VCS to query)")
-            print(f"    target_vppb : {payload[1]}  (vPPB slot to query)")
+            _p(f"{P}  [CCI-REQ] GET_PID_BINDING payload decoded:{R}")
+            _p(f"    target_vcs  : {payload[0]}  (VCS to query)")
+            _p(f"    target_vppb : {payload[1]}  (vPPB slot to query)")
 
         # --- CONFIGURE_PID_BINDING (0x5706) ---
         elif opcode == 0x5706:
@@ -206,13 +214,13 @@ class FmSmbusMctpServer(RunnableComponent):
             vcs     = payload[1]
             vppb    = payload[2]
             pid     = struct.unpack_from("<H", payload, 4)[0] & 0x0FFF
-            print(f"{P}  [CCI-REQ] CONFIGURE_PID_BINDING payload decoded:{R}")
-            print(f"    operation   : {ops}  ({op_name})")
-            print(f"    target_vcs  : {vcs}")
-            print(f"    target_vppb : {vppb}")
-            print(f"    pid         : 0x{pid:03X}  ({'UNASSIGNED' if pid == 0xFFF else f'PID 0x{pid:03X}'})")
+            _p(f"{P}  [CCI-REQ] CONFIGURE_PID_BINDING payload decoded:{R}")
+            _p(f"    operation   : {ops}  ({op_name})")
+            _p(f"    target_vcs  : {vcs}")
+            _p(f"    target_vppb : {vppb}")
+            _p(f"    pid         : 0x{pid:03X}  ({'UNASSIGNED' if pid == 0xFFF else f'PID 0x{pid:03X}'})")
             if len(payload) > 6:
-                print(f"{D}    hmat_data   : {len(payload)-6} bytes (HMAT/bandwidth info){R}")
+                _p(f"{D}    hmat_data   : {len(payload)-6} bytes (HMAT/bandwidth info){R}")
 
         # --- GET_DRT (0x5708) ---
         elif opcode == 0x5708:
@@ -221,10 +229,10 @@ class FmSmbusMctpServer(RunnableComponent):
             drt_idx    = payload[0]
             num_ent    = struct.unpack_from("<H", payload, 2)[0]
             start_ent  = struct.unpack_from("<H", payload, 4)[0]
-            print(f"{P}  [CCI-REQ] GET_DRT payload decoded:{R}")
-            print(f"    drt_index   : {drt_idx}  (which DRT table to read)")
-            print(f"    num_entries : {num_ent}  (how many DRT entries to read)")
-            print(f"    start_entry : 0x{start_ent:03X}  (starting DPID index)")
+            _p(f"{P}  [CCI-REQ] GET_DRT payload decoded:{R}")
+            _p(f"    drt_index   : {drt_idx}  (which DRT table to read)")
+            _p(f"    num_entries : {num_ent}  (how many DRT entries to read)")
+            _p(f"    start_entry : 0x{start_ent:03X}  (starting DPID index)")
 
         # --- SET_DRT (0x5709) ---
         elif opcode == 0x5709:
@@ -234,17 +242,17 @@ class FmSmbusMctpServer(RunnableComponent):
             num_ent   = struct.unpack_from("<H", payload, 2)[0]
             start_ent = struct.unpack_from("<H", payload, 4)[0]
             etype_map = {0: "INVALID", 1: "PHYSICAL_PORT", 2: "RGT_INDEX", 3: "RESERVED"}
-            print(f"{P}  [CCI-REQ] SET_DRT payload decoded:{R}")
-            print(f"    drt_index   : {drt_idx}")
-            print(f"    num_entries : {num_ent}")
-            print(f"    start_entry : 0x{start_ent:03X}  (starting DPID)")
+            _p(f"{P}  [CCI-REQ] SET_DRT payload decoded:{R}")
+            _p(f"    drt_index   : {drt_idx}")
+            _p(f"    num_entries : {num_ent}")
+            _p(f"    start_entry : 0x{start_ent:03X}  (starting DPID)")
             for i in range(num_ent):
                 off = 6 + i * 2
                 if off + 2 > len(payload):
                     break
                 etype  = payload[off] & 0x03
                 target = payload[off + 1]
-                print(f"    entry[{i}]    : type={etype_map.get(etype,'?')}({etype})  routing_target={target}")
+                _p(f"    entry[{i}]    : type={etype_map.get(etype,'?')}({etype})  routing_target={target}")
 
     @staticmethod
     def _decode_response_payload(opcode: int, payload: bytes) -> None:
@@ -266,11 +274,11 @@ class FmSmbusMctpServer(RunnableComponent):
             gae_map  = int.from_bytes(payload[0:8], "little")
             num_drts = payload[8]
             num_rgts = payload[9]
-            print(f"{P}  [CCI-RESP] IDENTIFY_PBR_SWITCH response decoded:{R}")
-            print(f"    gae_support_map : 0x{gae_map:016X}")
-            print(f"{D}      64-bit bitmask -- bit N=1 means VCS N has a GAE (Generic Access Endpoint){R}")
-            print(f"    num_drts        : {num_drts}  (number of DRT tables the switch supports)")
-            print(f"    num_rgts        : {num_rgts}  (number of RGT tables)")
+            _p(f"{P}  [CCI-RESP] IDENTIFY_PBR_SWITCH response decoded:{R}")
+            _p(f"    gae_support_map : 0x{gae_map:016X}")
+            _p(f"{D}      64-bit bitmask -- bit N=1 means VCS N has a GAE (Generic Access Endpoint){R}")
+            _p(f"    num_drts        : {num_drts}  (number of DRT tables the switch supports)")
+            _p(f"    num_rgts        : {num_rgts}  (number of RGT tables)")
 
         # --- GET_PID_BINDING (0x5705) ---
         elif opcode == 0x5705:
@@ -281,8 +289,8 @@ class FmSmbusMctpServer(RunnableComponent):
                 bound_str = "UNBOUND  (0xFFF = no PID assigned to this vPPB)"
             else:
                 bound_str = f"BOUND -> PID 0x{pid:03X}"
-            print(f"{P}  [CCI-RESP] GET_PID_BINDING response decoded:{R}")
-            print(f"    bound_pid       : 0x{pid:03X}  ({bound_str})")
+            _p(f"{P}  [CCI-RESP] GET_PID_BINDING response decoded:{R}")
+            _p(f"    bound_pid       : 0x{pid:03X}  ({bound_str})")
 
         # --- GET_DRT (0x5708) ---
         elif opcode == 0x5708:
@@ -291,16 +299,16 @@ class FmSmbusMctpServer(RunnableComponent):
             num_ent   = struct.unpack_from("<H", payload, 2)[0]
             start_ent = struct.unpack_from("<H", payload, 4)[0]
             etype_map = {0: "INVALID", 1: "PHYSICAL_PORT", 2: "RGT_INDEX", 3: "RESERVED"}
-            print(f"{P}  [CCI-RESP] GET_DRT response decoded:{R}")
-            print(f"    num_entries     : {num_ent}")
-            print(f"    start_entry     : 0x{start_ent:03X}  (DPID base index)")
+            _p(f"{P}  [CCI-RESP] GET_DRT response decoded:{R}")
+            _p(f"    num_entries     : {num_ent}")
+            _p(f"    start_entry     : 0x{start_ent:03X}  (DPID base index)")
             for i in range(num_ent):
                 off = 8 + i * 2
                 if off + 2 > len(payload):
                     break
                 etype  = payload[off] & 0x03
                 target = payload[off + 1]
-                print(f"    entry[{i}]        : DPID=0x{start_ent + i:03X}  type={etype_map.get(etype,'?')}  routing_target={target}")
+                _p(f"    entry[{i}]        : DPID=0x{start_ent + i:03X}  type={etype_map.get(etype,'?')}  routing_target={target}")
 
     def _print_rx_packet(self, raw_frame: bytes, req: "SmbusMctpRequest | None",
                          parse_error: str = "") -> None:
@@ -309,16 +317,16 @@ class FmSmbusMctpServer(RunnableComponent):
         Cyan header.  Each byte shown as [Bxx] hex binary + field meaning + spec ref.
         """
         sep = "=" * 60
-        print(f"\n\033[1m\033[96m{sep}")
-        print(f"  SMBus+MCTP RX  [{len(raw_frame)} bytes]  port {self._port}")
-        print(f"{sep}\033[0m")
+        _p(f"\n\033[1m\033[96m{sep}")
+        _p(f"  SMBus+MCTP RX  [{len(raw_frame)} bytes]  port {self._port}")
+        _p(f"{sep}\033[0m")
 
-        print("\033[2m  Raw bytes:\033[0m")
-        print(self._hex_dump(raw_frame))
+        _p("\033[2m  Raw bytes:\033[0m")
+        _p(self._hex_dump(raw_frame))
 
         if parse_error:
-            print(f"\033[91m  Parse ERROR: {parse_error}\033[0m")
-            print(f"\033[1m{'-' * 60}\033[0m\n")
+            _p(f"\033[91m  Parse ERROR: {parse_error}\033[0m")
+            _p(f"\033[1m{'-' * 60}\033[0m\n")
             return
 
         H = "\033[93m"   # yellow -- section headings
@@ -330,54 +338,54 @@ class FmSmbusMctpServer(RunnableComponent):
         # Frame layout:  B00=dest_addr  B01=cmd_code  B02=byte_count
         #                B03=src_addr   B04..=MCTP
         # ================================================================
-        print(f"{H}  -- SMBus Header (DSP0237 ss.4.1) --------------------{R}")
+        _p(f"{H}  -- SMBus Header (DSP0237 ss.4.1) --------------------{R}")
 
         b = raw_frame[0]
         i2c = b >> 1
         rw  = b & 1
-        print(f"  [B00] dest_slave_addr : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bits[7:1] = 0x{i2c:02X}   7-bit I2C address of FM (destination){R}")
-        print(f"{D}         bit[0]    = {rw}      R/W direction -- {'0=WRITE: master sends request to FM slave' if rw == 0 else '1=READ'}{R}")
+        _p(f"  [B00] dest_slave_addr : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bits[7:1] = 0x{i2c:02X}   7-bit I2C address of FM (destination){R}")
+        _p(f"{D}         bit[0]    = {rw}      R/W direction -- {'0=WRITE: master sends request to FM slave' if rw == 0 else '1=READ'}{R}")
 
         b = raw_frame[1]
         desc = "MCTP over SMBus command code (fixed=0x0F per DSP0237 ss.4.1.1)" if b == 0x0F else f"UNKNOWN -- expected 0x0F"
-        print(f"  [B01] command_code    : 0x{b:02X}")
-        print(f"{D}         = {desc}{R}")
+        _p(f"  [B01] command_code    : 0x{b:02X}")
+        _p(f"{D}         = {desc}{R}")
 
         b = raw_frame[2]
         overhead = 18   # src_addr(1)+hdr_ver(1)+dest_eid(1)+src_eid(1)+flags(1)+msg_type(1)+CCI_hdr(12)
         plen_calc = b - overhead
-        print(f"  [B02] byte_count      : {b:3d}  (0x{b:02X})")
-        print(f"{D}         = total bytes from B03 to last payload byte (excluding PEC){R}")
-        print(f"{D}           breakdown: src_addr(1)+MCTP_hdr(4)+msg_type(1)+CCI_hdr(12)+CCI_payload({max(plen_calc, 0)}){R}")
+        _p(f"  [B02] byte_count      : {b:3d}  (0x{b:02X})")
+        _p(f"{D}         = total bytes from B03 to last payload byte (excluding PEC){R}")
+        _p(f"{D}           breakdown: src_addr(1)+MCTP_hdr(4)+msg_type(1)+CCI_hdr(12)+CCI_payload({max(plen_calc, 0)}){R}")
 
         b = raw_frame[3]
         i2c_src = b >> 1
         sf      = b & 1
-        print(f"  [B03] src_slave_addr  : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bits[7:1] = 0x{i2c_src:02X}   7-bit I2C address of sender (device / QEMU){R}")
-        print(f"{D}         bit[0]    = {sf}      source address present flag (per DSP0237 ss.4.1){R}")
+        _p(f"  [B03] src_slave_addr  : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bits[7:1] = 0x{i2c_src:02X}   7-bit I2C address of sender (device / QEMU){R}")
+        _p(f"{D}         bit[0]    = {sf}      source address present flag (per DSP0237 ss.4.1){R}")
 
         # ================================================================
         # MCTP Transport Header  (DMTF DSP0236 ss.8.1)
         # B04=hdr_ver  B05=dest_eid  B06=src_eid  B07=flags
         # ================================================================
-        print(f"{H}  -- MCTP Transport Header (DSP0236 ss.8.1) -----------{R}")
+        _p(f"{H}  -- MCTP Transport Header (DSP0236 ss.8.1) -----------{R}")
 
         b = raw_frame[4]
         ver = b & 0x0F
-        print(f"  [B04] hdr_ver         : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bits[7:4] = {b >> 4}      reserved (must be 0){R}")
-        print(f"{D}         bits[3:0] = {ver}      MCTP version = {ver}  (only version 1 is defined){R}")
+        _p(f"  [B04] hdr_ver         : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bits[7:4] = {b >> 4}      reserved (must be 0){R}")
+        _p(f"{D}         bits[3:0] = {ver}      MCTP version = {ver}  (only version 1 is defined){R}")
 
         b = raw_frame[5]
-        print(f"  [B05] dest_eid        : 0x{b:02X}  ({b})")
-        print(f"{D}         = destination Endpoint ID -- the FM EID that receives this request{R}")
-        print(f"{D}           EID 0x00 and 0xFF are reserved; assigned by MCTP control protocol{R}")
+        _p(f"  [B05] dest_eid        : 0x{b:02X}  ({b})")
+        _p(f"{D}         = destination Endpoint ID -- the FM EID that receives this request{R}")
+        _p(f"{D}           EID 0x00 and 0xFF are reserved; assigned by MCTP control protocol{R}")
 
         b = raw_frame[6]
-        print(f"  [B06] src_eid         : 0x{b:02X}  ({b})")
-        print(f"{D}         = source Endpoint ID -- the device / QEMU EID that sent this request{R}")
+        _p(f"  [B06] src_eid         : 0x{b:02X}  ({b})")
+        _p(f"{D}         = source Endpoint ID -- the device / QEMU EID that sent this request{R}")
 
         b = raw_frame[7]
         som = (b >> 7) & 1
@@ -385,18 +393,18 @@ class FmSmbusMctpServer(RunnableComponent):
         seq = (b >> 4) & 3
         to_ = (b >> 3) & 1
         tag = b & 0x7
-        print(f"  [B07] flags           : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bit[7]  SOM    : {som}    Start Of Message -- {'IS start (first or only packet)' if som else 'NOT start (continuation fragment)'}{R}")
-        print(f"{D}         bit[6]  EOM    : {eom}    End Of Message   -- {'IS end (last or only packet -- single-fragment message)' if eom else 'NOT end (more fragments follow)'}{R}")
-        print(f"{D}         bit[5:4] seq   : {seq:02b}   Packet Sequence Number = {seq}  (increments per-fragment, 2-bit wraps at 4){R}")
-        print(f"{D}         bit[3]  TO     : {to_}    Tag Owner bit    -- {'1 = requester (device/QEMU) owns this tag' if to_ else '0 = responder (FM) owns this tag'}{R}")
-        print(f"{D}         bit[2:0] tag   : {tag:03b}  Message Tag = {tag}  (FM must echo same tag in response){R}")
+        _p(f"  [B07] flags           : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bit[7]  SOM    : {som}    Start Of Message -- {'IS start (first or only packet)' if som else 'NOT start (continuation fragment)'}{R}")
+        _p(f"{D}         bit[6]  EOM    : {eom}    End Of Message   -- {'IS end (last or only packet -- single-fragment message)' if eom else 'NOT end (more fragments follow)'}{R}")
+        _p(f"{D}         bit[5:4] seq   : {seq:02b}   Packet Sequence Number = {seq}  (increments per-fragment, 2-bit wraps at 4){R}")
+        _p(f"{D}         bit[3]  TO     : {to_}    Tag Owner bit    -- {'1 = requester (device/QEMU) owns this tag' if to_ else '0 = responder (FM) owns this tag'}{R}")
+        _p(f"{D}         bit[2:0] tag   : {tag:03b}  Message Tag = {tag}  (FM must echo same tag in response){R}")
 
         # ================================================================
         # MCTP Message Type byte  (DSP0236 ss.8.4)
         # B08 = IC(1 bit) | msg_type(7 bits)
         # ================================================================
-        print(f"{H}  -- MCTP Message Type Byte (DSP0236 ss.8.4) ----------{R}")
+        _p(f"{H}  -- MCTP Message Type Byte (DSP0236 ss.8.4) ----------{R}")
 
         b = raw_frame[8]
         ic    = (b >> 7) & 1
@@ -409,38 +417,38 @@ class FmSmbusMctpServer(RunnableComponent):
             0x7E: "CXL_FM_API",
             0x7F: "VENDOR_DEFINED",
         }.get(mtype, f"UNKNOWN(0x{mtype:02X})")
-        print(f"  [B08] msg_type_byte   : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bit[7]  IC     : {ic}    Integrity Check bit -- {'enabled: MCTP-level checksum appended after payload' if ic else 'disabled: no MCTP-level integrity check'}{R}")
-        print(f"{D}         bit[6:0] type  : 0x{mtype:02X}  {mtype_name}  (CXL 4.0 Table 7-1){R}")
+        _p(f"  [B08] msg_type_byte   : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bit[7]  IC     : {ic}    Integrity Check bit -- {'enabled: MCTP-level checksum appended after payload' if ic else 'disabled: no MCTP-level integrity check'}{R}")
+        _p(f"{D}         bit[6:0] type  : 0x{mtype:02X}  {mtype_name}  (CXL 4.0 Table 7-1){R}")
 
         # ================================================================
         # CCI Message Header  (CXL 4.0 ss.7.7.1)  B09..B20  (12 bytes)
         # ================================================================
-        print(f"{H}  -- CCI Message Header (CXL 4.0 ss.7.7.1) [B09..B20]{R}")
+        _p(f"{H}  -- CCI Message Header (CXL 4.0 ss.7.7.1) [B09..B20]{R}")
         cs = 9   # CCI header start offset for RX frame
 
         b = raw_frame[cs]         # B09
         cat = b & 0x0F
         cat_name = {0: "REQUEST", 1: "RESPONSE"}.get(cat, f"UNKNOWN({cat})")
-        print(f"  [B09] message_category: 0x{b:02X}")
-        print(f"{D}         bits[7:4] = {b >> 4}     reserved (must be 0){R}")
-        print(f"{D}         bits[3:0] = {cat}     {cat_name}  (0=REQUEST from device, 1=RESPONSE from FM){R}")
+        _p(f"  [B09] message_category: 0x{b:02X}")
+        _p(f"{D}         bits[7:4] = {b >> 4}     reserved (must be 0){R}")
+        _p(f"{D}         bits[3:0] = {cat}     {cat_name}  (0=REQUEST from device, 1=RESPONSE from FM){R}")
 
         b = raw_frame[cs + 1]     # B10
-        print(f"  [B10] message_tag     : 0x{b:02X}  = {b}")
-        print(f"{D}         tag assigned by the requester (device); FM echoes this value unchanged in response{R}")
-        print(f"{D}         allows device to match async responses to its outstanding requests{R}")
+        _p(f"  [B10] message_tag     : 0x{b:02X}  = {b}")
+        _p(f"{D}         tag assigned by the requester (device); FM echoes this value unchanged in response{R}")
+        _p(f"{D}         allows device to match async responses to its outstanding requests{R}")
 
         b = raw_frame[cs + 2]     # B11
-        print(f"  [B11] reserved        : 0x{b:02X}  (must be 0 per CXL 4.0 ss.7.7.1)")
+        _p(f"  [B11] reserved        : 0x{b:02X}  (must be 0 per CXL 4.0 ss.7.7.1)")
 
         b12 = raw_frame[cs + 3]
         b13 = raw_frame[cs + 4]
         opcode = int.from_bytes(raw_frame[cs+3:cs+5], "little")
         opcode_str = get_opcode_string(opcode)
-        print(f"  [B12] opcode[7:0]     : 0x{b12:02X}  \\")
-        print(f"  [B13] opcode[15:8]    : 0x{b13:02X}   > opcode = \033[1m0x{opcode:04X}\033[0m  {opcode_str}  (little-endian 16-bit)")
-        print(f"{D}         CCI opcode selects which command the switch executes{R}")
+        _p(f"  [B12] opcode[7:0]     : 0x{b12:02X}  \\")
+        _p(f"  [B13] opcode[15:8]    : 0x{b13:02X}   > opcode = \033[1m0x{opcode:04X}\033[0m  {opcode_str}  (little-endian 16-bit)")
+        _p(f"{D}         CCI opcode selects which command the switch executes{R}")
 
         b14 = raw_frame[cs + 5]
         b15 = raw_frame[cs + 6]
@@ -450,12 +458,12 @@ class FmSmbusMctpServer(RunnableComponent):
         plen    = plen_lo | (plen_hi << 16)
         bg_op   = (b16 >> 7) & 1
         bg_desc = "YES -- background command (switch will return BACKGROUND_COMMAND_STARTED)" if bg_op else "no -- foreground command (switch responds inline)"
-        print(f"  [B14] payload_len[7:0] : 0x{b14:02X}  \\")
-        print(f"  [B15] payload_len[15:8]: 0x{b15:02X}   > payload_length[15:0] = {plen_lo}  (little-endian)")
-        print(f"  [B16] {{bg_op|rsvd|len[19:16]}}: 0x{b16:02X}  = 0b{b16 >> 4:04b}_{b16 & 0x0F:04b}")
-        print(f"{D}         bit[7]   bg_op : {bg_op}    Background Operation = {bg_desc}{R}")
-        print(f"{D}         bit[6:5] rsvd  : {(b16 >> 5) & 3:02b}   reserved{R}")
-        print(f"{D}         bit[4:0] extra : {plen_hi:05b} payload_length[19:16] = {plen_hi}  => total payload = {plen} bytes{R}")
+        _p(f"  [B14] payload_len[7:0] : 0x{b14:02X}  \\")
+        _p(f"  [B15] payload_len[15:8]: 0x{b15:02X}   > payload_length[15:0] = {plen_lo}  (little-endian)")
+        _p(f"  [B16] {{bg_op|rsvd|len[19:16]}}: 0x{b16:02X}  = 0b{b16 >> 4:04b}_{b16 & 0x0F:04b}")
+        _p(f"{D}         bit[7]   bg_op : {bg_op}    Background Operation = {bg_desc}{R}")
+        _p(f"{D}         bit[6:5] rsvd  : {(b16 >> 5) & 3:02b}   reserved{R}")
+        _p(f"{D}         bit[4:0] extra : {plen_hi:05b} payload_length[19:16] = {plen_hi}  => total payload = {plen} bytes{R}")
 
         b17 = raw_frame[cs + 8]
         b18 = raw_frame[cs + 9]
@@ -465,22 +473,22 @@ class FmSmbusMctpServer(RunnableComponent):
         except ValueError:
             rc_name = "UNKNOWN"
         rc_color = "\033[92m" if rc == 0 else "\033[93m" if rc == 1 else "\033[91m"
-        print(f"  [B17] return_code[7:0] : 0x{b17:02X}  \\")
-        print(f"  [B18] return_code[15:8]: 0x{b18:02X}   > return_code = {rc_color}{rc_name}\033[0m  (0x{rc:04X})  [always 0 in REQUEST]")
+        _p(f"  [B17] return_code[7:0] : 0x{b17:02X}  \\")
+        _p(f"  [B18] return_code[15:8]: 0x{b18:02X}   > return_code = {rc_color}{rc_name}\033[0m  (0x{rc:04X})  [always 0 in REQUEST]")
 
         b19 = raw_frame[cs + 10]
         b20 = raw_frame[cs + 11]
         vs  = int.from_bytes(raw_frame[cs+10:cs+12], "little")
-        print(f"  [B19] vendor_spec[7:0] : 0x{b19:02X}  \\")
-        print(f"  [B20] vendor_spec[15:8]: 0x{b20:02X}   > vendor_specific_status = 0x{vs:04X}  [always 0 in REQUEST]")
+        _p(f"  [B19] vendor_spec[7:0] : 0x{b19:02X}  \\")
+        _p(f"  [B20] vendor_spec[15:8]: 0x{b20:02X}   > vendor_specific_status = 0x{vs:04X}  [always 0 in REQUEST]")
 
         # -- CCI Payload [B21..] -------------------------------------------
         payload = req.cci_payload
         if payload:
             pay_start = cs + 12
             pay_end   = pay_start + len(payload) - 1
-            print(f"{H}  -- CCI Payload [B{pay_start:02d}..B{pay_end:02d}]  ({len(payload)} bytes) ----------------{R}")
-            print(self._hex_dump(payload))
+            _p(f"{H}  -- CCI Payload [B{pay_start:02d}..B{pay_end:02d}]  ({len(payload)} bytes) ----------------{R}")
+            _p(self._hex_dump(payload))
             self._decode_request_payload(opcode, payload)
 
         # -- PEC -----------------------------------------------------------
@@ -489,12 +497,12 @@ class FmSmbusMctpServer(RunnableComponent):
         pec_ok  = pec == pec_exp
         pec_str = "\033[92mOK\033[0m" if pec_ok else f"\033[91mBAD -- computed 0x{pec_exp:02X}\033[0m"
         lb      = len(raw_frame) - 1
-        print(f"{H}  -- PEC / Packet Error Code (DSP0237 ss.4.1.2) ------{R}")
-        print(f"  [B{lb:02d}] PEC (CRC-8)   : 0x{pec:02X}  [{pec_str}]")
-        print(f"{D}         CRC-8 computed over B00..B{lb - 1} using SMBus polynomial 0x07{R}")
-        print(f"{D}         validates that the entire frame (including SMBus headers) is uncorrupted{R}")
+        _p(f"{H}  -- PEC / Packet Error Code (DSP0237 ss.4.1.2) ------{R}")
+        _p(f"  [B{lb:02d}] PEC (CRC-8)   : 0x{pec:02X}  [{pec_str}]")
+        _p(f"{D}         CRC-8 computed over B00..B{lb - 1} using SMBus polynomial 0x07{R}")
+        _p(f"{D}         validates that the entire frame (including SMBus headers) is uncorrupted{R}")
 
-        print(f"\033[1m{'-' * 60}\033[0m\n")
+        _p(f"\033[1m{'-' * 60}\033[0m\n")
 
     def _print_tx_packet(
         self,
@@ -507,16 +515,16 @@ class FmSmbusMctpServer(RunnableComponent):
         Each byte shown as [Bxx] hex binary + field meaning + spec ref.
         """
         if len(resp_frame) < 20:
-            print(f"\033[91m  [TX] Response frame too short ({len(resp_frame)} bytes)\033[0m")
+            _p(f"\033[91m  [TX] Response frame too short ({len(resp_frame)} bytes)\033[0m")
             return
 
         sep = "=" * 60
-        print(f"\n\033[1m\033[92m{sep}")
-        print(f"  SMBus+MCTP TX  [{len(resp_frame)} bytes]  port {self._port}")
-        print(f"{sep}\033[0m")
+        _p(f"\n\033[1m\033[92m{sep}")
+        _p(f"  SMBus+MCTP TX  [{len(resp_frame)} bytes]  port {self._port}")
+        _p(f"{sep}\033[0m")
 
-        print("\033[2m  Raw bytes:\033[0m")
-        print(self._hex_dump(resp_frame))
+        _p("\033[2m  Raw bytes:\033[0m")
+        _p(self._hex_dump(resp_frame))
 
         H = "\033[92m"   # green -- section headings (TX)
         D = "\033[2m"    # dim   -- detail / annotation
@@ -527,38 +535,38 @@ class FmSmbusMctpServer(RunnableComponent):
         # TX layout (response): B00=byte_count  B01=fm_src_addr
         # (no dest_addr or command_code -- those are in the request frame)
         # ================================================================
-        print(f"{H}  -- SMBus Response Header (DSP0237 ss.4.2) -----------{R}")
+        _p(f"{H}  -- SMBus Response Header (DSP0237 ss.4.2) -----------{R}")
 
         b = resp_frame[0]          # B00
-        print(f"  [B00] byte_count      : {b:3d}  (0x{b:02X})")
-        print(f"{D}         = total bytes from B01 to last payload byte (excluding PEC){R}")
-        print(f"{D}           breakdown: fm_src_addr(1)+hdr_ver(1)+dest_eid(1)+src_eid(1)+flags(1)+msg_type(1)+CCI_hdr(12)+CCI_payload({max(b - 18, 0)}){R}")
+        _p(f"  [B00] byte_count      : {b:3d}  (0x{b:02X})")
+        _p(f"{D}         = total bytes from B01 to last payload byte (excluding PEC){R}")
+        _p(f"{D}           breakdown: fm_src_addr(1)+hdr_ver(1)+dest_eid(1)+src_eid(1)+flags(1)+msg_type(1)+CCI_hdr(12)+CCI_payload({max(b - 18, 0)}){R}")
 
         b = resp_frame[1]          # B01
         i2c = b >> 1
         rw  = b & 1
-        print(f"  [B01] fm_src_addr     : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bits[7:1] = 0x{i2c:02X}   7-bit I2C address of FM (source of this response){R}")
-        print(f"{D}         bit[0]    = {rw}      {'1=READ direction (FM is source/slave returning data)' if rw else '0=WRITE'}{R}")
+        _p(f"  [B01] fm_src_addr     : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bits[7:1] = 0x{i2c:02X}   7-bit I2C address of FM (source of this response){R}")
+        _p(f"{D}         bit[0]    = {rw}      {'1=READ direction (FM is source/slave returning data)' if rw else '0=WRITE'}{R}")
 
         # ================================================================
         # MCTP Transport Header  (DMTF DSP0236 ss.8.1)  B02..B05
         # ================================================================
-        print(f"{H}  -- MCTP Transport Header (DSP0236 ss.8.1) -----------{R}")
+        _p(f"{H}  -- MCTP Transport Header (DSP0236 ss.8.1) -----------{R}")
 
         b = resp_frame[2]          # B02
         ver = b & 0x0F
-        print(f"  [B02] hdr_ver         : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bits[7:4] = {b >> 4}      reserved (must be 0){R}")
-        print(f"{D}         bits[3:0] = {ver}      MCTP version = {ver}  (must equal request hdr_ver){R}")
+        _p(f"  [B02] hdr_ver         : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bits[7:4] = {b >> 4}      reserved (must be 0){R}")
+        _p(f"{D}         bits[3:0] = {ver}      MCTP version = {ver}  (must equal request hdr_ver){R}")
 
         b = resp_frame[3]          # B03
-        print(f"  [B03] dest_eid        : 0x{b:02X}  ({b})")
-        print(f"{D}         = destination Endpoint ID -- device/QEMU EID (echoed from request src_eid){R}")
+        _p(f"  [B03] dest_eid        : 0x{b:02X}  ({b})")
+        _p(f"{D}         = destination Endpoint ID -- device/QEMU EID (echoed from request src_eid){R}")
 
         b = resp_frame[4]          # B04
-        print(f"  [B04] src_eid         : 0x{b:02X}  ({b})")
-        print(f"{D}         = source Endpoint ID -- FM EID that is sending this response{R}")
+        _p(f"  [B04] src_eid         : 0x{b:02X}  ({b})")
+        _p(f"{D}         = source Endpoint ID -- FM EID that is sending this response{R}")
 
         b = resp_frame[5]          # B05
         som = (b >> 7) & 1
@@ -566,17 +574,17 @@ class FmSmbusMctpServer(RunnableComponent):
         seq = (b >> 4) & 3
         to_ = (b >> 3) & 1
         tag = b & 0x7
-        print(f"  [B05] flags           : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bit[7]  SOM    : {som}    Start Of Message -- {'IS start (first or only packet)' if som else 'NOT start'}{R}")
-        print(f"{D}         bit[6]  EOM    : {eom}    End Of Message   -- {'IS end (single-fragment response)' if eom else 'NOT end'}{R}")
-        print(f"{D}         bit[5:4] seq   : {seq:02b}   Packet Sequence Number = {seq}  (must match request seq){R}")
-        print(f"{D}         bit[3]  TO     : {to_}    Tag Owner bit    -- {'0 = responder (FM) owns tag in response' if to_ == 0 else '1 = requester -- unexpected in response'}{R}")
-        print(f"{D}         bit[2:0] tag   : {tag:03b}  Message Tag = {tag}  (MUST match request msg_tag to pair req/resp){R}")
+        _p(f"  [B05] flags           : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bit[7]  SOM    : {som}    Start Of Message -- {'IS start (first or only packet)' if som else 'NOT start'}{R}")
+        _p(f"{D}         bit[6]  EOM    : {eom}    End Of Message   -- {'IS end (single-fragment response)' if eom else 'NOT end'}{R}")
+        _p(f"{D}         bit[5:4] seq   : {seq:02b}   Packet Sequence Number = {seq}  (must match request seq){R}")
+        _p(f"{D}         bit[3]  TO     : {to_}    Tag Owner bit    -- {'0 = responder (FM) owns tag in response' if to_ == 0 else '1 = requester -- unexpected in response'}{R}")
+        _p(f"{D}         bit[2:0] tag   : {tag:03b}  Message Tag = {tag}  (MUST match request msg_tag to pair req/resp){R}")
 
         # ================================================================
         # MCTP Message Type byte  (DSP0236 ss.8.4)  B06
         # ================================================================
-        print(f"{H}  -- MCTP Message Type Byte (DSP0236 ss.8.4) ----------{R}")
+        _p(f"{H}  -- MCTP Message Type Byte (DSP0236 ss.8.4) ----------{R}")
 
         b = resp_frame[6]          # B06
         ic    = (b >> 7) & 1
@@ -589,37 +597,37 @@ class FmSmbusMctpServer(RunnableComponent):
             0x7E: "CXL_FM_API",
             0x7F: "VENDOR_DEFINED",
         }.get(mtype, f"UNKNOWN(0x{mtype:02X})")
-        print(f"  [B06] msg_type_byte   : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
-        print(f"{D}         bit[7]  IC     : {ic}    Integrity Check bit -- {'enabled' if ic else 'disabled -- no MCTP-level checksum'}{R}")
-        print(f"{D}         bit[6:0] type  : 0x{mtype:02X}  {mtype_name}  (CXL 4.0 Table 7-1){R}")
+        _p(f"  [B06] msg_type_byte   : 0x{b:02X}  = 0b{b >> 4:04b}_{b & 0x0F:04b}")
+        _p(f"{D}         bit[7]  IC     : {ic}    Integrity Check bit -- {'enabled' if ic else 'disabled -- no MCTP-level checksum'}{R}")
+        _p(f"{D}         bit[6:0] type  : 0x{mtype:02X}  {mtype_name}  (CXL 4.0 Table 7-1){R}")
 
         # ================================================================
         # CCI Message Header  (CXL 4.0 ss.7.7.1)  B07..B18  (12 bytes)
         # ================================================================
-        print(f"{H}  -- CCI Message Header (CXL 4.0 ss.7.7.1) [B07..B18]{R}")
+        _p(f"{H}  -- CCI Message Header (CXL 4.0 ss.7.7.1) [B07..B18]{R}")
         cs = 7   # CCI header start offset for TX frame
 
         b = resp_frame[cs]         # B07
         cat = b & 0x0F
         cat_name = {0: "REQUEST", 1: "RESPONSE"}.get(cat, f"UNKNOWN({cat})")
-        print(f"  [B07] message_category: 0x{b:02X}")
-        print(f"{D}         bits[7:4] = {b >> 4}     reserved (must be 0){R}")
-        print(f"{D}         bits[3:0] = {cat}     {cat_name}  (0=REQUEST, 1=RESPONSE from FM){R}")
+        _p(f"  [B07] message_category: 0x{b:02X}")
+        _p(f"{D}         bits[7:4] = {b >> 4}     reserved (must be 0){R}")
+        _p(f"{D}         bits[3:0] = {cat}     {cat_name}  (0=REQUEST, 1=RESPONSE from FM){R}")
 
         b = resp_frame[cs + 1]     # B08
-        print(f"  [B08] message_tag     : 0x{b:02X}  = {b}")
-        print(f"{D}         FM echoes the exact tag value from the request -- device uses it to match response{R}")
+        _p(f"  [B08] message_tag     : 0x{b:02X}  = {b}")
+        _p(f"{D}         FM echoes the exact tag value from the request -- device uses it to match response{R}")
 
         b = resp_frame[cs + 2]     # B09
-        print(f"  [B09] reserved        : 0x{b:02X}  (must be 0 per CXL 4.0 ss.7.7.1)")
+        _p(f"  [B09] reserved        : 0x{b:02X}  (must be 0 per CXL 4.0 ss.7.7.1)")
 
         b10 = resp_frame[cs + 3]
         b11 = resp_frame[cs + 4]
         opcode = int.from_bytes(resp_frame[cs+3:cs+5], "little")
         opcode_str = get_opcode_string(opcode)
-        print(f"  [B10] opcode[7:0]     : 0x{b10:02X}  \\")
-        print(f"  [B11] opcode[15:8]    : 0x{b11:02X}   > opcode = \033[1m0x{opcode:04X}\033[0m  {opcode_str}  (little-endian 16-bit)")
-        print(f"{D}         MUST match the opcode sent in the request; confirms which command this response is for{R}")
+        _p(f"  [B10] opcode[7:0]     : 0x{b10:02X}  \\")
+        _p(f"  [B11] opcode[15:8]    : 0x{b11:02X}   > opcode = \033[1m0x{opcode:04X}\033[0m  {opcode_str}  (little-endian 16-bit)")
+        _p(f"{D}         MUST match the opcode sent in the request; confirms which command this response is for{R}")
 
         b12 = resp_frame[cs + 5]
         b13 = resp_frame[cs + 6]
@@ -629,12 +637,12 @@ class FmSmbusMctpServer(RunnableComponent):
         plen    = plen_lo | (plen_hi << 16)
         is_bg   = bool((b14 >> 7) & 1)
         bg_desc = "YES -- switch started background operation (CONFIGURE_PID_BINDING)" if is_bg else "no -- switch completed command inline"
-        print(f"  [B12] payload_len[7:0] : 0x{b12:02X}  \\")
-        print(f"  [B13] payload_len[15:8]: 0x{b13:02X}   > payload_length[15:0] = {plen_lo}  (little-endian)")
-        print(f"  [B14] {{bg_op|rsvd|len[19:16]}}: 0x{b14:02X}  = 0b{b14 >> 4:04b}_{b14 & 0x0F:04b}")
-        print(f"{D}         bit[7]   bg_op : {int(is_bg)}    Background Operation flag = {bg_desc}{R}")
-        print(f"{D}         bit[6:5] rsvd  : {(b14 >> 5) & 3:02b}   reserved{R}")
-        print(f"{D}         bit[4:0] extra : {plen_hi:05b} payload_length[19:16] = {plen_hi}  => total response payload = {plen} bytes{R}")
+        _p(f"  [B12] payload_len[7:0] : 0x{b12:02X}  \\")
+        _p(f"  [B13] payload_len[15:8]: 0x{b13:02X}   > payload_length[15:0] = {plen_lo}  (little-endian)")
+        _p(f"  [B14] {{bg_op|rsvd|len[19:16]}}: 0x{b14:02X}  = 0b{b14 >> 4:04b}_{b14 & 0x0F:04b}")
+        _p(f"{D}         bit[7]   bg_op : {int(is_bg)}    Background Operation flag = {bg_desc}{R}")
+        _p(f"{D}         bit[6:5] rsvd  : {(b14 >> 5) & 3:02b}   reserved{R}")
+        _p(f"{D}         bit[4:0] extra : {plen_hi:05b} payload_length[19:16] = {plen_hi}  => total response payload = {plen} bytes{R}")
 
         b15 = resp_frame[cs + 8]
         b16 = resp_frame[cs + 9]
@@ -644,25 +652,25 @@ class FmSmbusMctpServer(RunnableComponent):
         except ValueError:
             rc_name = "UNKNOWN"
         rc_color = "\033[92m" if return_code == 0 else "\033[93m" if return_code == 1 else "\033[91m"
-        print(f"  [B15] return_code[7:0] : 0x{b15:02X}  \\")
-        print(f"  [B16] return_code[15:8]: 0x{b16:02X}   > return_code = {rc_color}{rc_name}\033[0m  (0x{return_code:04X})")
-        print(f"{D}         0x0000=SUCCESS, 0x0001=BACKGROUND_COMMAND_STARTED, 0x0002=INVALID_INPUT{R}")
-        print(f"{D}         0x0003=UNSUPPORTED, 0x0004=INTERNAL_ERROR  (CXL 4.0 Table 7-18){R}")
+        _p(f"  [B15] return_code[7:0] : 0x{b15:02X}  \\")
+        _p(f"  [B16] return_code[15:8]: 0x{b16:02X}   > return_code = {rc_color}{rc_name}\033[0m  (0x{return_code:04X})")
+        _p(f"{D}         0x0000=SUCCESS, 0x0001=BACKGROUND_COMMAND_STARTED, 0x0002=INVALID_INPUT{R}")
+        _p(f"{D}         0x0003=UNSUPPORTED, 0x0004=INTERNAL_ERROR  (CXL 4.0 Table 7-18){R}")
 
         b17 = resp_frame[cs + 10]
         b18 = resp_frame[cs + 11]
         vs  = int.from_bytes(resp_frame[cs+10:cs+12], "little")
-        print(f"  [B17] vendor_spec[7:0] : 0x{b17:02X}  \\")
-        print(f"  [B18] vendor_spec[15:8]: 0x{b18:02X}   > vendor_specific_status = 0x{vs:04X}")
-        print(f"{D}         implementation-defined; 0x0000 for standard PBR commands{R}")
+        _p(f"  [B17] vendor_spec[7:0] : 0x{b17:02X}  \\")
+        _p(f"  [B18] vendor_spec[15:8]: 0x{b18:02X}   > vendor_specific_status = 0x{vs:04X}")
+        _p(f"{D}         implementation-defined; 0x0000 for standard PBR commands{R}")
 
         # -- CCI Payload [B19..] -------------------------------------------
         cci_payload = resp_frame[cs + 12:cs + 12 + plen]
         if cci_payload:
             pay_start = cs + 12
             pay_end   = pay_start + len(cci_payload) - 1
-            print(f"{H}  -- CCI Response Payload [B{pay_start:02d}..B{pay_end:02d}]  ({len(cci_payload)} bytes) --------{R}")
-            print(self._hex_dump(cci_payload))
+            _p(f"{H}  -- CCI Response Payload [B{pay_start:02d}..B{pay_end:02d}]  ({len(cci_payload)} bytes) --------{R}")
+            _p(self._hex_dump(cci_payload))
             self._decode_response_payload(opcode, cci_payload)
 
         # -- PEC -----------------------------------------------------------
@@ -671,12 +679,12 @@ class FmSmbusMctpServer(RunnableComponent):
         pec_ok  = pec == pec_exp
         pec_str = "\033[92mOK\033[0m" if pec_ok else f"\033[91mBAD -- computed 0x{pec_exp:02X}\033[0m"
         lb      = len(resp_frame) - 1
-        print(f"{H}  -- PEC / Packet Error Code (DSP0237 ss.4.1.2) ------{R}")
-        print(f"  [B{lb:02d}] PEC (CRC-8)   : 0x{pec:02X}  [{pec_str}]")
-        print(f"{D}         CRC-8 computed over B00..B{lb - 1} using SMBus polynomial 0x07{R}")
-        print(f"{D}         QEMU SMBus master verifies this before accepting the response{R}")
+        _p(f"{H}  -- PEC / Packet Error Code (DSP0237 ss.4.1.2) ------{R}")
+        _p(f"  [B{lb:02d}] PEC (CRC-8)   : 0x{pec:02X}  [{pec_str}]")
+        _p(f"{D}         CRC-8 computed over B00..B{lb - 1} using SMBus polynomial 0x07{R}")
+        _p(f"{D}         QEMU SMBus master verifies this before accepting the response{R}")
 
-        print(f"\033[1m{'-' * 60}\033[0m\n")
+        _p(f"\033[1m{'-' * 60}\033[0m\n")
 
     # -- Main client loop ---------------------------------------------------
 

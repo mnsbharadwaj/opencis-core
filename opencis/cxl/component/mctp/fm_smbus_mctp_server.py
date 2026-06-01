@@ -26,6 +26,7 @@ CCI field layout reference: opencis/cxl/transport/fields.py
 """
 
 import asyncio
+import struct
 from asyncio import create_task, gather
 from typing import Optional, TYPE_CHECKING
 
@@ -150,6 +151,156 @@ class FmSmbusMctpServer(RunnableComponent):
             asc_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
             lines.append(f"{indent}{i:04X}  {hex_part:<47}  |{asc_part}|")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------ #
+    # PBR CCI payload decoders                                             #
+    # Called by _print_rx_packet (request) and _print_tx_packet (response) #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _decode_request_payload(opcode: int, payload: bytes) -> None:
+        """
+        Print a human-readable field-by-field breakdown of a CCI request
+        payload for every known PBR opcode.  Called after the hex dump.
+        """
+        if not payload:
+            return
+
+        P = "\033[96m"   # cyan accent for field labels
+        R = "\033[0m"
+        D = "\033[2m"
+
+        # --- CONFIGURE_PID_ASSIGNMENT (0x5704) ---
+        if opcode == 0x5704:
+            if len(payload) < 4:
+                return
+            ops     = payload[0] & 0x07
+            op_name = {0: "ASSIGN", 1: "CLEAR_ALL", 2: "CLEAR_SPECIFIC"}.get(ops, f"UNKNOWN({ops})")
+            num_tgt = struct.unpack_from("<H", payload, 2)[0]
+            print(f"{P}  [CCI-REQ] CONFIGURE_PID_ASSIGNMENT payload decoded:{R}")
+            print(f"    operation   : {ops}  ({op_name})")
+            print(f"    num_targets : {num_tgt}")
+            for i in range(num_tgt):
+                off = 4 + i * 5
+                if off + 5 > len(payload):
+                    break
+                pid      = struct.unpack_from("<H", payload, off)[0] & 0x0FFF
+                tgt_id   = struct.unpack_from("<H", payload, off + 2)[0]
+                inst_id  = payload[off + 4]
+                print(f"    entry[{i}]    : pid=0x{pid:03X}  target_port={tgt_id}  instance={inst_id}")
+
+        # --- GET_PID_BINDING (0x5705) ---
+        elif opcode == 0x5705:
+            if len(payload) < 2:
+                return
+            print(f"{P}  [CCI-REQ] GET_PID_BINDING payload decoded:{R}")
+            print(f"    target_vcs  : {payload[0]}  (VCS to query)")
+            print(f"    target_vppb : {payload[1]}  (vPPB slot to query)")
+
+        # --- CONFIGURE_PID_BINDING (0x5706) ---
+        elif opcode == 0x5706:
+            if len(payload) < 6:
+                return
+            ops     = payload[0] & 0x07
+            op_name = {0: "BIND", 1: "UNBIND"}.get(ops, f"UNKNOWN({ops})")
+            vcs     = payload[1]
+            vppb    = payload[2]
+            pid     = struct.unpack_from("<H", payload, 4)[0] & 0x0FFF
+            print(f"{P}  [CCI-REQ] CONFIGURE_PID_BINDING payload decoded:{R}")
+            print(f"    operation   : {ops}  ({op_name})")
+            print(f"    target_vcs  : {vcs}")
+            print(f"    target_vppb : {vppb}")
+            print(f"    pid         : 0x{pid:03X}  ({'UNASSIGNED' if pid == 0xFFF else f'PID 0x{pid:03X}'})")
+            if len(payload) > 6:
+                print(f"{D}    hmat_data   : {len(payload)-6} bytes (HMAT/bandwidth info){R}")
+
+        # --- GET_DRT (0x5708) ---
+        elif opcode == 0x5708:
+            if len(payload) < 6:
+                return
+            drt_idx    = payload[0]
+            num_ent    = struct.unpack_from("<H", payload, 2)[0]
+            start_ent  = struct.unpack_from("<H", payload, 4)[0]
+            print(f"{P}  [CCI-REQ] GET_DRT payload decoded:{R}")
+            print(f"    drt_index   : {drt_idx}  (which DRT table to read)")
+            print(f"    num_entries : {num_ent}  (how many DRT entries to read)")
+            print(f"    start_entry : 0x{start_ent:03X}  (starting DPID index)")
+
+        # --- SET_DRT (0x5709) ---
+        elif opcode == 0x5709:
+            if len(payload) < 6:
+                return
+            drt_idx   = payload[0]
+            num_ent   = struct.unpack_from("<H", payload, 2)[0]
+            start_ent = struct.unpack_from("<H", payload, 4)[0]
+            etype_map = {0: "INVALID", 1: "PHYSICAL_PORT", 2: "RGT_INDEX", 3: "RESERVED"}
+            print(f"{P}  [CCI-REQ] SET_DRT payload decoded:{R}")
+            print(f"    drt_index   : {drt_idx}")
+            print(f"    num_entries : {num_ent}")
+            print(f"    start_entry : 0x{start_ent:03X}  (starting DPID)")
+            for i in range(num_ent):
+                off = 6 + i * 2
+                if off + 2 > len(payload):
+                    break
+                etype  = payload[off] & 0x03
+                target = payload[off + 1]
+                print(f"    entry[{i}]    : type={etype_map.get(etype,'?')}({etype})  routing_target={target}")
+
+    @staticmethod
+    def _decode_response_payload(opcode: int, payload: bytes) -> None:
+        """
+        Print a human-readable field-by-field breakdown of a CCI response
+        payload for every known PBR opcode.  Called after the hex dump.
+        """
+        if not payload:
+            return
+
+        P = "\033[92m"   # green accent for field labels (matches TX header)
+        R = "\033[0m"
+        D = "\033[2m"
+
+        # --- IDENTIFY_PBR_SWITCH (0x5700) ---
+        if opcode == 0x5700:
+            if len(payload) < 10:
+                return
+            gae_map  = int.from_bytes(payload[0:8], "little")
+            num_drts = payload[8]
+            num_rgts = payload[9]
+            print(f"{P}  [CCI-RESP] IDENTIFY_PBR_SWITCH response decoded:{R}")
+            print(f"    gae_support_map : 0x{gae_map:016X}")
+            print(f"{D}      64-bit bitmask -- bit N=1 means VCS N has a GAE (Generic Access Endpoint){R}")
+            print(f"    num_drts        : {num_drts}  (number of DRT tables the switch supports)")
+            print(f"    num_rgts        : {num_rgts}  (number of RGT tables)")
+
+        # --- GET_PID_BINDING (0x5705) ---
+        elif opcode == 0x5705:
+            if len(payload) < 2:
+                return
+            pid   = struct.unpack_from("<H", payload, 0)[0] & 0x0FFF
+            if pid == 0xFFF:
+                bound_str = "UNBOUND  (0xFFF = no PID assigned to this vPPB)"
+            else:
+                bound_str = f"BOUND -> PID 0x{pid:03X}"
+            print(f"{P}  [CCI-RESP] GET_PID_BINDING response decoded:{R}")
+            print(f"    bound_pid       : 0x{pid:03X}  ({bound_str})")
+
+        # --- GET_DRT (0x5708) ---
+        elif opcode == 0x5708:
+            if len(payload) < 8:
+                return
+            num_ent   = struct.unpack_from("<H", payload, 2)[0]
+            start_ent = struct.unpack_from("<H", payload, 4)[0]
+            etype_map = {0: "INVALID", 1: "PHYSICAL_PORT", 2: "RGT_INDEX", 3: "RESERVED"}
+            print(f"{P}  [CCI-RESP] GET_DRT response decoded:{R}")
+            print(f"    num_entries     : {num_ent}")
+            print(f"    start_entry     : 0x{start_ent:03X}  (DPID base index)")
+            for i in range(num_ent):
+                off = 8 + i * 2
+                if off + 2 > len(payload):
+                    break
+                etype  = payload[off] & 0x03
+                target = payload[off + 1]
+                print(f"    entry[{i}]        : DPID=0x{start_ent + i:03X}  type={etype_map.get(etype,'?')}  routing_target={target}")
 
     def _print_rx_packet(self, raw_frame: bytes, req: "SmbusMctpRequest | None",
                          parse_error: str = "") -> None:
@@ -330,6 +481,7 @@ class FmSmbusMctpServer(RunnableComponent):
             pay_end   = pay_start + len(payload) - 1
             print(f"{H}  -- CCI Payload [B{pay_start:02d}..B{pay_end:02d}]  ({len(payload)} bytes) ----------------{R}")
             print(self._hex_dump(payload))
+            self._decode_request_payload(opcode, payload)
 
         # -- PEC -----------------------------------------------------------
         pec     = raw_frame[-1]
@@ -511,6 +663,7 @@ class FmSmbusMctpServer(RunnableComponent):
             pay_end   = pay_start + len(cci_payload) - 1
             print(f"{H}  -- CCI Response Payload [B{pay_start:02d}..B{pay_end:02d}]  ({len(cci_payload)} bytes) --------{R}")
             print(self._hex_dump(cci_payload))
+            self._decode_response_payload(opcode, cci_payload)
 
         # -- PEC -----------------------------------------------------------
         pec     = resp_frame[-1]

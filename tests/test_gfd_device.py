@@ -1,173 +1,245 @@
 """
-tests/test_gfd_device.py
-========================
-Unit tests for the Generic Fabric Device (GFD).
+Copyright (c) 2024-2025, Eeum, Inc.
 
-Tests verify:
-  1.  GFD instantiation and lifecycle (start / stop).
-  2.  BAR-0 size is GFD_BAR_SIZE (4 KB).
-  3.  device_id_reg sentinel at BAR-0 offset 0.
-  4.  status_reg bit-0 set to 1 on startup.
-  5.  Scratchpad register read-write round-trip.
-  6.  Access counter increments monotonically.
-  7.  CCI Identify returns IdentifyComponentType.GFD (0x04).
+This software is licensed under the terms of the Revised BSD License.
+See LICENSE for details.
 
-All tests are in-process (test_mode=True) — no TCP required.
+Unit tests for CxlGfdDevice (spec-correct: NO BAR, CCI-mailbox only).
+
+CXL 4.0 §7.7.13:
+  - GFD has NO BAR and NO PCIe config space.
+  - GFD communicates ONLY via cci_fifo (CCI mailbox).
+  - FM/GAE sends CCI requests to cci_fifo.host_to_target.
+  - GFD reads request, dispatches to CciExecutor, puts response on
+    cci_fifo.target_to_host.
+
+Tests removed (compared to previous wrong implementation):
+  - test_gfd_bar_size              (GFD has no BAR)
+  - test_gfd_registers_device_id_sentinel (no MMIO registers)
+  - test_gfd_registers_status_ready       (no MMIO registers)
+  - test_gfd_scratchpad_roundtrip         (no scratchpad registers)
+  - test_gfd_access_counter_increments    (no MMIO registers)
+
+Tests kept / added:
+  - test_gfd_starts_and_stops      (lifecycle still valid)
+  - test_gfd_cci_identify          (Identify via cci_fifo — now spec-correct path)
+  - test_gfd_cci_mailbox_dispatch  (full cci_fifo round-trip: request in, response out)
+  - test_gfd_cci_unknown_opcode    (unknown opcode returns UNSUPPORTED)
+  - test_gfd_cci_executor_accessible (get_cci_executor() helper)
 """
 
 import asyncio
+import struct
 import pytest
 
-from opencis.cxl.component.cxl_connection import CxlConnection
 from opencis.apps.generic_fabric_device import GenericFabricDevice
-from opencis.cxl.mmio.gfd_mmio_registers import GfdMmioRegisters, GFD_BAR_SIZE
-from opencis.cxl.component.cci_executor import CciRequest
-from opencis.cxl.cci.common import CCI_GENERIC_COMMAND_OPCODE
+from opencis.cxl.component.cxl_connection import CxlConnection
+from opencis.cxl.transport.cci_packets import CciMessagePacket
+from opencis.cxl.transport.packet_constants import CCI_MCTP_MESSAGE_CATEGORY
+from opencis.cxl.cci.common import CCI_RETURN_CODE
 from opencis.cxl.cci.generic.information_and_status.identify import (
-    IdentifyResponsePayload,
+    IdentifyCommand,
     IdentifyComponentType,
+    IdentifyResponsePayload,
 )
-from opencis.util.logger import logger
+
+
+# ── Fixtures ───────────────────────────────────────────────────────────────────
 
 
 @pytest.fixture(autouse=True)
-def _set_log_level():
-    logger.set_stdout_levels(loglevel="WARNING")
-    yield
+def _set_log_level(caplog):
+    import logging
+    caplog.set_level(logging.WARNING)
 
 
-def _make_gfd(port_index: int = 1, serial: str = "0000000000000001") -> GenericFabricDevice:
-    """Create a GFD in test-mode (no TCP) with a fresh CxlConnection."""
+def _make_gfd(serial_number: str = "0000000000000001") -> tuple:
+    """
+    Create a GenericFabricDevice in test_mode=True with a fresh CxlConnection.
+
+    Returns (gfd_app, cxl_connection) where cxl_connection has:
+      - cci_fifo.host_to_target  — test puts requests here
+      - cci_fifo.target_to_host  — test reads GFD responses from here
+    """
     conn = CxlConnection()
-    return GenericFabricDevice(
-        port_index=port_index,
-        serial_number=serial,
+    gfd = GenericFabricDevice(
         test_mode=True,
         cxl_connection=conn,
+        port_index=1,
+        serial_number=serial_number,
     )
+    return gfd, conn
 
 
-# ── 1. Lifecycle ──────────────────────────────────────────────────────────────
+async def _send_cci_request(
+    conn: CxlConnection,
+    opcode: int,
+    payload: bytes = b"",
+    tag: int = 0,
+) -> CciMessagePacket:
+    """
+    Put a CCI request on cci_fifo.host_to_target and read the response
+    from cci_fifo.target_to_host.
+
+    Returns the raw CciMessagePacket response.
+    """
+    req = CciMessagePacket.create(
+        data=payload,
+        message_category=CCI_MCTP_MESSAGE_CATEGORY.REQUEST,
+        opcode=opcode,
+        message_tag=tag,
+    )
+    await conn.cci_fifo.host_to_target.put(req)
+    resp = await asyncio.wait_for(
+        conn.cci_fifo.target_to_host.get(),
+        timeout=5.0,
+    )
+    return resp
+
+
+# ── Tests ──────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_gfd_starts_and_stops():
-    """GFD must reach 'running' state and stop cleanly."""
-    from opencis.util.component import COMPONENT_STATUS
-    gfd = _make_gfd()
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    # Use the internal _status attribute since RunnableComponent has no is_running()
-    assert gfd._status == COMPONENT_STATUS.RUNNING
-    await gfd.stop()
-    await asyncio.wait_for(task, timeout=5.0)
+    """GFD reaches RUNNING state and stops cleanly."""
+    gfd, _ = _make_gfd()
 
-
-# ── 2. BAR-0 register defaults ────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_gfd_bar_size():
-    """BAR-0 must be exactly GFD_BAR_SIZE bytes."""
-    gfd = _make_gfd()
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    try:
-        assert gfd.get_gfd_device().get_bar_size() == GFD_BAR_SIZE
-    finally:
+    async def _run():
+        run_task = asyncio.create_task(gfd.run())
+        await asyncio.wait_for(gfd.wait_for_ready(), timeout=5.0)
         await gfd.stop()
-        await asyncio.wait_for(task, timeout=5.0)
+        await run_task
 
+    await _run()
 
-@pytest.mark.asyncio
-async def test_gfd_registers_device_id_sentinel():
-    """device_id_reg (BAR-0 offset 0x00) must carry the 0x6FD00001 sentinel."""
-    gfd = _make_gfd()
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    try:
-        regs: GfdMmioRegisters = gfd.get_gfd_device().get_registers()
-        device_id = regs.read_bytes(0, 7)
-        assert device_id == 0x6FD00001, (
-            f"Expected 0x6FD00001 at BAR-0 offset 0, got 0x{device_id:016X}"
-        )
-    finally:
-        await gfd.stop()
-        await asyncio.wait_for(task, timeout=5.0)
-
-
-@pytest.mark.asyncio
-async def test_gfd_registers_status_ready():
-    """status_reg bit-0 must be 1 on startup (device ready)."""
-    gfd = _make_gfd()
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    try:
-        regs: GfdMmioRegisters = gfd.get_gfd_device().get_registers()
-        status = regs.read_bytes(0x28, 0x2B)   # status_reg @ byte 40 (0x28)
-        assert status & 0x1 == 1, f"status_reg bit-0 not set: 0x{status:08X}"
-    finally:
-        await gfd.stop()
-        await asyncio.wait_for(task, timeout=5.0)
-
-
-# ── 3. Scratchpad read-write round-trip ───────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_gfd_scratchpad_roundtrip():
-    """All four scratchpad registers must support read-after-write."""
-    gfd = _make_gfd()
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    try:
-        regs: GfdMmioRegisters = gfd.get_gfd_device().get_registers()
-        values = [0xDEADBEEFCAFEBABE, 0x0102030405060708, 0xFFFF000000000001, 0x0]
-        for idx, val in enumerate(values):
-            regs.set_scratchpad(idx, val)
-            read_back = regs.get_scratchpad(idx)
-            assert read_back == val, (
-                f"Scratchpad {idx}: wrote 0x{val:016X}, read 0x{read_back:016X}"
-            )
-    finally:
-        await gfd.stop()
-        await asyncio.wait_for(task, timeout=5.0)
-
-
-@pytest.mark.asyncio
-async def test_gfd_access_counter_increments():
-    """increment_access_count() must monotonically increase the access counter."""
-    gfd = _make_gfd()
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    try:
-        regs: GfdMmioRegisters = gfd.get_gfd_device().get_registers()
-        for expected in range(1, 6):
-            regs.increment_access_count()
-            count = regs.read_bytes(0x30, 0x37)
-            assert count == expected, f"Expected count {expected}, got {count}"
-    finally:
-        await gfd.stop()
-        await asyncio.wait_for(task, timeout=5.0)
-
-
-# ── 4. CCI Identify ───────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_gfd_cci_identify():
-    """CCI Identify command must return IdentifyComponentType.GFD (0x04)."""
-    gfd = _make_gfd(serial="0000AABB00000001")
-    task = asyncio.create_task(gfd.run())
-    await gfd.wait_for_ready()
-    try:
-        dev = gfd.get_gfd_device()
-        executor = dev._cci_executor
-        request = CciRequest(opcode=CCI_GENERIC_COMMAND_OPCODE.IDENTIFY)
-        response = await executor.execute_command(request)
-        assert response.return_code.value == 0, (
-            f"Identify failed: {response.return_code}"
+    """
+    CCI Identify (opcode 0x0001) sent via cci_fifo returns
+    component_type = GFD (0x04).
+
+    This is the spec-correct path:
+      test → cci_fifo.host_to_target → GFD _run_cci_mailbox
+           → CciExecutor → IdentifyCommand
+           → cci_fifo.target_to_host → test reads response
+    """
+    gfd, conn = _make_gfd()
+
+    async def _run():
+        run_task = asyncio.create_task(gfd.run())
+        await asyncio.wait_for(gfd.wait_for_ready(), timeout=5.0)
+
+        resp = await _send_cci_request(
+            conn,
+            opcode=IdentifyCommand.OPCODE,
+            tag=42,
         )
-        payload = IdentifyResponsePayload.parse(response.payload)
-        assert payload.component_type == IdentifyComponentType.GFD, (
-            f"Expected GFD(0x04), got {payload.component_type}"
-        )
-    finally:
+
+        # Verify headers
+        assert resp.cci_msg_header.message_tag == 42
+        assert resp.cci_msg_header.command_opcode == IdentifyCommand.OPCODE
+        assert resp.cci_msg_header.return_code == int(CCI_RETURN_CODE.SUCCESS)
+        assert resp.cci_msg_header.message_category == CCI_MCTP_MESSAGE_CATEGORY.RESPONSE
+
+        # Verify payload — component_type at bytes 19 (per Identify spec)
+        payload = resp.get_payload()
+        id_resp = IdentifyResponsePayload.parse(payload)
+        assert id_resp.component_type == IdentifyComponentType.GFD
+
         await gfd.stop()
-        await asyncio.wait_for(task, timeout=5.0)
+        await run_task
+
+    await _run()
+
+
+@pytest.mark.asyncio
+async def test_gfd_cci_mailbox_dispatch():
+    """
+    Full cci_fifo round-trip:
+      1. Put CCI request on cci_fifo.host_to_target
+      2. GFD dispatches to CciExecutor
+      3. Response appears on cci_fifo.target_to_host
+
+    Verifies message_tag echo and return_code = SUCCESS.
+    """
+    gfd, conn = _make_gfd()
+
+    async def _run():
+        run_task = asyncio.create_task(gfd.run())
+        await asyncio.wait_for(gfd.wait_for_ready(), timeout=5.0)
+
+        for tag in [0, 1, 127, 255]:
+            resp = await _send_cci_request(
+                conn,
+                opcode=IdentifyCommand.OPCODE,
+                tag=tag,
+            )
+            assert resp.cci_msg_header.message_tag == tag, \
+                f"tag echo failed for tag={tag}"
+            assert resp.cci_msg_header.return_code == int(CCI_RETURN_CODE.SUCCESS), \
+                f"expected SUCCESS for tag={tag}"
+
+        await gfd.stop()
+        await run_task
+
+    await _run()
+
+
+@pytest.mark.asyncio
+async def test_gfd_cci_unknown_opcode():
+    """
+    Unknown opcode returns UNSUPPORTED.
+    GFD should not crash; it should return a valid error response.
+    """
+    gfd, conn = _make_gfd()
+
+    async def _run():
+        run_task = asyncio.create_task(gfd.run())
+        await asyncio.wait_for(gfd.wait_for_ready(), timeout=5.0)
+
+        resp = await _send_cci_request(
+            conn,
+            opcode=0xDEAD,  # unknown opcode
+            tag=7,
+        )
+
+        assert resp.cci_msg_header.message_tag == 7
+        assert resp.cci_msg_header.return_code == int(CCI_RETURN_CODE.UNSUPPORTED)
+
+        await gfd.stop()
+        await run_task
+
+    await _run()
+
+
+@pytest.mark.asyncio
+async def test_gfd_cci_executor_accessible():
+    """
+    get_cci_executor() returns a live CciExecutor that has Identify registered.
+    """
+    gfd, _ = _make_gfd()
+    executor = gfd.get_gfd_device().get_cci_executor()
+    assert executor is not None
+    # Identify should be registered
+    assert IdentifyCommand.OPCODE in executor._commands
+
+
+@pytest.mark.asyncio
+async def test_gfd_no_bar():
+    """
+    GFD must NOT expose any BAR-related attributes.
+    Confirms the spec-correct behaviour: GFD has no host-visible registers.
+    """
+    gfd, _ = _make_gfd()
+    device = gfd.get_gfd_device()
+    # These must NOT exist on the spec-correct GFD
+    assert not hasattr(device, "get_bar_size"), \
+        "GFD must not have get_bar_size() — GFD has no BAR per CXL 4.0 §7.7.13"
+    assert not hasattr(device, "get_registers"), \
+        "GFD must not have get_registers() — GFD has no MMIO registers"
+    assert not hasattr(device, "_gfd_registers"), \
+        "GFD must not have _gfd_registers — GFD has no BAR"
+    assert not hasattr(device, "_cxl_io_manager"), \
+        "GFD must not have _cxl_io_manager — GFD is not a PCIe endpoint"

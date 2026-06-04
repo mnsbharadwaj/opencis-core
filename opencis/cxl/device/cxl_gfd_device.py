@@ -4,82 +4,74 @@ Copyright (c) 2024-2025, Eeum, Inc.
 This software is licensed under the terms of the Revised BSD License.
 See LICENSE for details.
 
-CXL Generic Fabric Device (GFD)
---------------------------------
-A CXL 4.0 Port-Based Routing (PBR) device that attaches to a PBR switch DSP
-port and exposes a 4 KB MMIO BAR-0 for CXL.io read/write operations.
+CXL Generic Fabric Device (GFD) — Spec-Correct Implementation
+--------------------------------------------------------------
+CXL 4.0 §7.7.13: A GFD is a FABRIC device that attaches to a PBR switch
+DSP port. It is NOT a PCIe endpoint and is NOT enumerated by the host.
 
-Key properties
-  - CXL.io only: MMIO reads and writes via BAR-0 (no CXL.mem HDM decoder).
-  - CCI Identify returns IdentifyComponentType.GFD (0x04) so the FM can
-    recognise it, assign a PID, and program the switch DRT accordingly.
-  - Config-space advertises cache_capable=0, mem_capable=0 (IO-only GFD).
-  - BAR-0 is a 4 KB register map with scratchpad, status, and control regs.
+Key properties (per spec):
+  - NO BAR visible to the host.
+  - NO PCIe config space enumerable by the host.
+  - Has a CCI mailbox reachable via cci_fifo (DSP port on the switch).
+  - FM sends CCI to GFD via FabricCrawlOut (0x5701) → DspCciTunnel → cci_fifo.
+  - Host sends CCI to GFD via GAE Proxy (0x5809) → GaeManager → DspCciTunnel → cci_fifo.
+  - GFD responds to CCI commands (Identify 0x0001, vendor-specific, etc.).
 
-Lifecycle
-  1. Device connects to switch via SwitchConnectionClient (TCP).
-  2. Switch DSP enumerates BAR-0 size via config-space probing.
-  3. FM issues pbr:identify → pbr:configurePid → pbr:setDrt to route traffic.
-  4. Host issues CXL.io reads/writes to BAR-0 which the device processes.
+What was removed vs the previous (incorrect) implementation:
+  - CxlIoManager       — drove PCIe config-space + MMIO BAR (wrong for GFD)
+  - CxlMemManager      — idle stub for CXL.mem (GFD is IO-only, never used)
+  - GfdMmioRegisters   — BAR-0 register file (host-visible; spec says NO BAR)
+  - CxlType3SldConfigSpace — PCIe config space (host can't enumerate GFD)
+  - _init_device callback  — set up BAR and config space
+  - PciComponent, BarEntry — PCIe-specific constructs
+
+What the GFD now has:
+  - CciExecutor: dispatches received CCI commands to registered handlers.
+  - _run_cci_mailbox(): reads CciMessagePacket from cci_fifo.host_to_target,
+    dispatches to CciExecutor, writes response to cci_fifo.target_to_host.
+  - IdentifyCommand registered at startup (component_type = GFD = 0x04).
+
+Lifecycle:
+  1. GenericFabricDevice opens TCP to switch (SwitchConnectionClient).
+  2. Switch assigns DSP port; CxlPacketProcessor routes packets to CxlConnection FIFOs.
+  3. FM issues FabricCrawlOut(0x5701) → DspCciTunnel → cci_fifo.host_to_target.
+  4. _run_cci_mailbox() reads packet → CciExecutor → response → cci_fifo.target_to_host.
+  5. DspCciTunnel._drain_responses() picks up response → returns to FM.
 """
 
+import asyncio
 from asyncio import create_task, gather
 from typing import Optional
 
 from opencis.util.logger import logger
 from opencis.util.component import RunnableComponent
 from opencis.cxl.component.cxl_connection import CxlConnection
-from opencis.cxl.component.cxl_io_manager import CxlIoManager
-from opencis.cxl.component.cxl_mem_manager import CxlMemManager
-from opencis.cxl.component.cxl_io_callback_data import CxlIoCallbackData
+from opencis.cxl.component.cci_executor import CciExecutor, CciRequest, CciResponse
+from opencis.cxl.cci.common import CCI_RETURN_CODE
 from opencis.cxl.cci.generic.information_and_status.identify import (
     IdentifyCommand,
     IdentifyComponentType,
     IdentifyResponsePayload,
 )
-from opencis.cxl.component.cci_executor import CciExecutor
-from opencis.cxl.mmio.gfd_mmio_registers import GfdMmioRegisters, GFD_BAR_SIZE
-from opencis.cxl.config_space.dvsec import (
-    CXL_DEVICE_TYPE,
-    DvsecConfigSpaceOptions,
-    DvsecRegisterLocatorOptions,
-)
-from opencis.cxl.config_space.dvsec.cxl_devices import (
-    DvsecCxlCapabilityOptions,
-    DvsecCxlCacheableRangeOptions,
-)
-from opencis.cxl.config_space.doe.doe import CxlDoeExtendedCapabilityOptions
-from opencis.cxl.config_space.device import (
-    CxlType3SldConfigSpace,
-    CxlType3SldConfigSpaceOptions,
-)
-from opencis.cxl.config_space.serial_number.common import DeviceSNCapabilityOptions
-from opencis.cxl.component.cxl_memory_device_component import (
-    CxlMemoryDeviceComponent,
-    MemoryDeviceIdentity,
-)
-from opencis.cxl.component.hdm_decoder import HDM_DECODER_COUNT
-from opencis.pci.component.config_space_manager import PCI_DEVICE_TYPE
-from opencis.pci.component.pci import (
-    PciComponent,
-    PciComponentIdentity,
-    PCI_CLASS,
-    PCI_DEVICE_PORT_TYPE,
-    EEUM_VID,
-    SW_GFD_DID,
-)
-from opencis.pci.component.mmio_manager import BarEntry, BarInfo, MEMORY_TYPE
+from opencis.cxl.transport.cci_packets import CciMessagePacket
+from opencis.cxl.transport.packet_constants import CCI_MCTP_MESSAGE_CATEGORY
+from opencis.pci.component.pci import EEUM_VID, SW_GFD_DID
 
 
 class CxlGfdDevice(RunnableComponent):
     """
-    CXL Generic Fabric Device (GFD).
+    CXL Generic Fabric Device (GFD) — spec-correct implementation.
+
+    The GFD has NO BAR and NO PCIe config space. It is a pure CCI-mailbox
+    fabric device. All management is done via cci_fifo (FabricCrawlOut or
+    GAE proxy path).
 
     Parameters
     ----------
     transport_connection:
-        ``CxlConnection`` provided by ``SwitchConnectionClient`` (or passed
-        directly in test mode).
+        ``CxlConnection`` provided by ``SwitchConnectionClient`` or injected
+        in test mode. Only ``cci_fifo`` is used; mmio_fifo and cfg_fifo are
+        intentionally ignored.
     port_index:
         PBR switch DSP port number this device is attached to.
     serial_number:
@@ -100,99 +92,19 @@ class CxlGfdDevice(RunnableComponent):
 
         self._port_index = port_index
         self._serial_number = serial_number
-        self._upstream_connection = transport_connection
+        # Only cci_fifo is used — mmio_fifo and cfg_fifo are not wired
+        self._cci_fifo = transport_connection.cci_fifo
 
-        # ── Create registers and CCI executor BEFORE CxlIoManager ────────────
-        # CxlIoManager calls _init_device synchronously in __init__, so anything
-        # _init_device references must exist first.
-        self._gfd_registers = GfdMmioRegisters()
+        # CCI executor dispatches incoming commands to registered handlers
         self._cci_executor = CciExecutor(label=label)
 
-        # ── CxlIoManager wires MMIO and config-space FIFOs ───────────────────
-        self._cxl_io_manager = CxlIoManager(
-            mmio_upstream_fifo=transport_connection.mmio_fifo,
-            mmio_downstream_fifo=None,
-            cfg_upstream_fifo=transport_connection.cfg_fifo,
-            cfg_downstream_fifo=None,
-            device_type=PCI_DEVICE_TYPE.ENDPOINT,
-            init_callback=self._init_device,
-            label=label,
-        )
+        # Register CCI Identify — identifies this device as a GFD (0x04)
+        self._register_cci_commands()
 
-        # ── CxlMemManager — idle stub (GFD has no CXL.mem HDM decoder) ───────
-        self._cxl_mem_manager = CxlMemManager(
-            upstream_fifo=transport_connection.cxl_mem_fifo,
-            label=label,
-        )
+    # ── CCI command registration ───────────────────────────────────────────────
 
-    # ── Init callback called by CxlIoManager during construction ──────────────
-
-    def _init_device(self, cxl_io_callback_data: CxlIoCallbackData):
-        """Configure the config-space and BAR-0 MMIO register block."""
-
-        # ─ PCI identity ───────────────────────────────────────────────────────
-        pci_identity = PciComponentIdentity(
-            vendor_id=EEUM_VID,
-            device_id=SW_GFD_DID,
-            base_class_code=PCI_CLASS.MEMORY_CONTROLLER,
-            sub_class_coce=0x00,   # no specific sub-class for GFD
-            programming_interface=0x00,
-            device_port_type=PCI_DEVICE_PORT_TYPE.PCI_EXPRESS_ENDPOINT,
-        )
-        pci_component = PciComponent(pci_identity, cxl_io_callback_data.mmio_manager)
-
-        # ─ BAR-0: 4 KB GFD MMIO register block ───────────────────────────────
-        cxl_io_callback_data.mmio_manager.set_bar_entries([
-            BarEntry(
-                register=self._gfd_registers,
-                info=BarInfo(
-                    prefetchable=False,
-                    memory_type=MEMORY_TYPE.ADDRESS_64BIT,
-                ),
-            )
-        ])
-
-        # ─ Minimal CxlMemoryDeviceComponent stub ────────────────────────────
-        # DvsecConfigSpace for CXL_DEVICE_TYPE.LD requires a non-None
-        # memory_device_component even though GFD has mem_capable=0.
-        # We create a zero-capacity stub with no backing file.
-        _gfd_identity = MemoryDeviceIdentity()
-        _gfd_identity.fw_revision = MemoryDeviceIdentity.ascii_str_to_int("GFD EMU 1.0", 16)
-        _gfd_identity.set_total_capacity(0)
-        _gfd_identity.set_volatile_only_capacity(0)
-        _stub_mem_component = CxlMemoryDeviceComponent(
-            _gfd_identity,
-            decoder_count=HDM_DECODER_COUNT.DECODER_1,
-            memory_file="",   # empty string → no file backing
-            label=self._label,
-        )
-
-        # ─ CXL config-space (IO-only: mem_capable=0, cache_capable=0) ────────
-        config_options = CxlType3SldConfigSpaceOptions(
-            pci_component=pci_component,
-            dvsec=DvsecConfigSpaceOptions(
-                register_locator=DvsecRegisterLocatorOptions(registers=[]),
-                device_type=CXL_DEVICE_TYPE.LD,
-                memory_device_component=_stub_mem_component,
-                capability_options=DvsecCxlCapabilityOptions(
-                    cache_capable=0,
-                    mem_capable=0,
-                    hdm_count=0,
-                    cache_writeback_and_invalidate_capable=0,
-                    cache_size_unit=0,
-                    cache_size=0,
-                ),
-                cacheable_address_range=DvsecCxlCacheableRangeOptions(0x0, 0x0),
-            ),
-            doe=CxlDoeExtendedCapabilityOptions(cdat_entries=[]),
-            serial_number=DeviceSNCapabilityOptions(sn=self._serial_number),
-        )
-        config_space = CxlType3SldConfigSpace(
-            options=config_options, parent_name="cfgspace"
-        )
-        cxl_io_callback_data.config_space_manager.set_register(config_space)
-
-        # ─ CCI Identify — registers this device as GFD with the FM ────────────
+    def _register_cci_commands(self) -> None:
+        """Register all CCI commands supported by this GFD."""
         serial_int = int(self._serial_number, 16) if self._serial_number else 1
         identity = IdentifyResponsePayload(
             vendor_id=EEUM_VID,
@@ -207,42 +119,109 @@ class CxlGfdDevice(RunnableComponent):
             IdentifyCommand.OPCODE,
             IdentifyCommand(identity, label=self._label),
         )
+        logger.debug(self._create_message(
+            "Registered CCI Identify (component_type=GFD=0x04)"
+        ))
+
+    # ── CCI mailbox loop ───────────────────────────────────────────────────────
+
+    async def _run_cci_mailbox(self) -> None:
+        """
+        CCI mailbox dispatch loop.
+
+        Reads CCI request packets from cci_fifo.host_to_target (put there by
+        DspCciTunnel.send_and_wait() on the switch side), dispatches to
+        CciExecutor, and writes the response back to cci_fifo.target_to_host.
+
+        Packet format on the wire (cci_fifo.host_to_target):
+          - DspCciTunnel puts a raw CciMessagePacket.
+          - MctpCciExecutor (for MLD opcodes) puts a CciRequestPacket subclass
+            which also has .cci_msg_header and .get_cci_message().
+
+        We handle both by extracting CciMessagePacket before processing.
+        """
+        logger.debug(self._create_message("CCI mailbox started"))
+        while True:
+            packet = await self._cci_fifo.host_to_target.get()
+            if packet is None:
+                logger.debug(self._create_message("CCI mailbox: sentinel received, stopping"))
+                break
+
+            # ── Extract CciMessagePacket ──────────────────────────────────────
+            try:
+                if isinstance(packet, CciMessagePacket):
+                    cci_msg = packet
+                elif hasattr(packet, "get_cci_message"):
+                    cci_msg = packet.get_cci_message()
+                else:
+                    cci_msg = CciMessagePacket(bytearray(bytes(packet)))
+            except Exception as exc:
+                logger.error(self._create_message(
+                    f"CCI mailbox: failed to parse incoming packet: {exc}"
+                ))
+                continue
+
+            opcode = cci_msg.cci_msg_header.command_opcode
+            tag = cci_msg.cci_msg_header.message_tag
+            payload = cci_msg.get_payload()
+
+            logger.debug(self._create_message(
+                f"CCI mailbox: received opcode={opcode:#06x} tag={tag} "
+                f"payload_len={len(payload)}"
+            ))
+
+            # ── Dispatch to CciExecutor ──────────────────────────────────────
+            request = CciRequest(opcode=opcode, payload=payload)
+            try:
+                response: CciResponse = await self._cci_executor.execute_command(request)
+            except Exception as exc:
+                logger.error(self._create_message(
+                    f"CCI mailbox: CciExecutor raised for opcode={opcode:#06x}: {exc}"
+                ))
+                response = CciResponse(return_code=CCI_RETURN_CODE.INTERNAL_ERROR)
+
+            # ── Build response CciMessagePacket ──────────────────────────────
+            resp_msg = CciMessagePacket.create(
+                data=response.payload or b"",
+                message_category=CCI_MCTP_MESSAGE_CATEGORY.RESPONSE,
+                opcode=opcode,
+                message_tag=tag,
+                return_code=int(response.return_code),
+            )
+
+            await self._cci_fifo.target_to_host.put(resp_msg)
+            logger.debug(self._create_message(
+                f"CCI mailbox: sent response opcode={opcode:#06x} tag={tag} "
+                f"rc={response.return_code.name if hasattr(response.return_code, 'name') else response.return_code}"
+            ))
 
     # ── Public helpers ─────────────────────────────────────────────────────────
 
-    def get_bar_size(self) -> int:
-        """Return the size of BAR-0 in bytes."""
-        return GFD_BAR_SIZE
-
-    def get_registers(self) -> GfdMmioRegisters:
-        """Direct access to the register block (useful in tests or FM callbacks)."""
-        return self._gfd_registers
+    def get_cci_executor(self) -> CciExecutor:
+        """Return the CCI executor (useful for test introspection or extra command registration)."""
+        return self._cci_executor
 
     # ── RunnableComponent lifecycle ────────────────────────────────────────────
 
     async def _run(self):
-        logger.info(self._create_message("Starting"))
+        logger.info(self._create_message(
+            "Starting (spec-correct: NO BAR, NO PCIe config space, CCI-mailbox only)"
+        ))
         run_tasks = [
-            create_task(self._cxl_io_manager.run()),
-            create_task(self._cxl_mem_manager.run()),
             create_task(self._cci_executor.run()),
+            create_task(self._run_cci_mailbox()),
         ]
         wait_tasks = [
-            create_task(self._cxl_io_manager.wait_for_ready()),
-            create_task(self._cxl_mem_manager.wait_for_ready()),
             create_task(self._cci_executor.wait_for_ready()),
         ]
         await gather(*wait_tasks)
         await self._change_status_to_running()
-        logger.info(self._create_message("Ready — BAR-0 @ {} bytes".format(GFD_BAR_SIZE)))
+        logger.info(self._create_message("Ready — CCI mailbox active on cci_fifo"))
         await gather(*run_tasks)
         logger.info(self._create_message("Stopped"))
 
     async def _stop(self):
         logger.info(self._create_message("Stopping"))
-        tasks = [
-            create_task(self._cxl_io_manager.stop()),
-            create_task(self._cxl_mem_manager.stop()),
-            create_task(self._cci_executor.stop()),
-        ]
-        await gather(*tasks)
+        # Signal the mailbox loop to exit
+        await self._cci_fifo.host_to_target.put(None)
+        await self._cci_executor.stop()

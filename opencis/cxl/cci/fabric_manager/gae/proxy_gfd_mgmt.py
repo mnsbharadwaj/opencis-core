@@ -122,8 +122,13 @@ class ProxyGfdMgmtCommand(CciForegroundCommand):
             logger.error(self._create_message(f"parse error: {e}"))
             return CciResponse(return_code=CCI_RETURN_CODE.INVALID_INPUT)
 
-        if self._gae_manager.get_gfd_executor() is None:
-            logger.error(self._create_message("no GFD executor bound — cannot proxy"))
+        # Check for either tunnel (production) or executor (test mode)
+        if not self._gae_manager.has_gfd_binding():
+            logger.error(self._create_message(
+                "no GFD tunnel or executor bound — cannot proxy. "
+                "Call GaeManager.set_gfd_tunnel() (production) or "
+                "GaeManager.set_gfd_executor() (tests) first."
+            ))
             return CciResponse(return_code=CCI_RETURN_CODE.INTERNAL_ERROR)
 
         thread_id = await self._gae_manager.start_proxy(

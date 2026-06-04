@@ -153,6 +153,10 @@ class GaeManager:
     def get_gfd_executor(self) -> Optional[CciExecutor]:
         return self._gfd_executor
 
+    def has_gfd_binding(self) -> bool:
+        """Return True if either a DspCciTunnel or a direct CciExecutor is bound."""
+        return self._gfd_tunnel is not None or self._gfd_executor is not None
+
     # ------------------------------------------------------------------
     # vPPB list access (for Identify GAE / Get PID Access Vectors)
     # ------------------------------------------------------------------
@@ -225,26 +229,56 @@ class GaeManager:
         """Return current status of a proxy thread, or None if unknown."""
         return self._proxy_threads.get(thread_id)
 
+    def thread_count(self) -> int:
+        """Return the number of tracked proxy threads (active + completed)."""
+        return len(self._proxy_threads)
+
+    def active_thread_count(self) -> int:
+        """Return the number of proxy threads still running."""
+        return sum(1 for e in self._proxy_threads.values() if not e.completed)
+
     def cancel_proxy(self, thread_id: int) -> CCI_RETURN_CODE:
-        """Cancel an active proxy thread.  Returns INVALID_INPUT if not found."""
+        """
+        Cancel an active proxy thread.
+
+        If the thread is already completed this is a no-op (returns SUCCESS).
+        If the thread is in-flight, the asyncio task is cancelled and the entry
+        is marked as completed=True so Get Proxy Thread Status can still see it
+        (returns SUCCESS).
+        If the thread_id is unknown returns INVALID_INPUT.
+        """
         entry = self._proxy_threads.get(thread_id)
         if entry is None:
             logger.error(f"[{self._label}] cancel_proxy: thread {thread_id} not found")
             return CCI_RETURN_CODE.INVALID_INPUT
         if entry.completed:
-            # Already done — treat as success (idempotent)
+            # Already done — idempotent success
             logger.debug(
                 f"[{self._label}] cancel_proxy: thread {thread_id} already completed"
             )
             return CCI_RETURN_CODE.SUCCESS
+        # Cancel the asyncio task if still running
         if entry.task and not entry.task.done():
             entry.task.cancel()
             logger.debug(f"[{self._label}] cancel_proxy: thread {thread_id} cancelled")
-        del self._proxy_threads[thread_id]
+        # Mark completed so status poll returns a definitive answer
+        entry.completed = True
+        entry.return_code = int(CCI_RETURN_CODE.ABORTED)
         return CCI_RETURN_CODE.SUCCESS
 
-    def cleanup_completed_threads(self) -> None:
-        """Prune completed proxy threads from the registry."""
+    def purge_completed_threads(self) -> int:
+        """
+        Remove all completed proxy threads from the registry.
+        Returns the number of threads purged.
+        Call this periodically to prevent unbounded memory growth.
+        """
         done = [tid for tid, e in self._proxy_threads.items() if e.completed]
         for tid in done:
             del self._proxy_threads[tid]
+        if done:
+            logger.debug(f"[{self._label}] purged {len(done)} completed proxy threads")
+        return len(done)
+
+    def cleanup_completed_threads(self) -> None:
+        """Alias for purge_completed_threads() kept for backward compat."""
+        self.purge_completed_threads()

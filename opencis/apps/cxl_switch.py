@@ -197,13 +197,36 @@ class CxlSwitch(RunnableComponent):
             self._mctp_connection_client = MctpConnectionClient(
                 switch_config.mctp_host, switch_config.mctp_port
             )
+            # Pass the USP CxlConnection (port 0) so MctpCciExecutor creates a
+            # GaeCciMailbox on it — enabling CxlSimpleHost to send GAE CCI
+            # commands (0x5800–0x580B) directly over the port-8000 TCP channel.
+            _usp_conn = None
+            if switch_config.enable_pbr:
+                try:
+                    _usp_port_index = next(
+                        i for i, pc in enumerate(switch_config.port_configs)
+                        if pc.type == PORT_TYPE.USP
+                    )
+                    _usp_conn = self._switch_connection_manager.get_cxl_connection(
+                        _usp_port_index
+                    )
+                except StopIteration:
+                    pass  # no USP configured — mailbox not started
+
             self._mctp_cci_executor = MctpCciExecutor(
                 self._mctp_connection_client.get_mctp_connection(),
                 self._switch_connection_manager,
                 switch_config.port_configs,
                 self._virtual_switch_manager,
+                usp_connection=_usp_conn,
             )
             self._initialize_mctp_endpoint()
+
+        # Fix: set gae_support_map = 0x01 (bit 0 = VCS 0 has a GAE block)
+        # when GAE/PBR mode is enabled. Without this IdentifyPbrSwitch returns
+        # gae_support_map=0 which tells the FM/host there is no GAE — wrong.
+        if switch_config.enable_pbr and self._pbr_switch_manager is not None:
+            self._pbr_switch_manager.get_identify_info().gae_support_map = 0x01
 
         self._run_as_child = switch_config.run_as_child
 

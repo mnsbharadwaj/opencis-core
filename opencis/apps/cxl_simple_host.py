@@ -49,6 +49,12 @@ class CxlSimpleHost(RunnableComponent):
             "HOST_CXL_MEM_READ": self._cxl_mem_read,
             "HOST_CXL_MEM_WRITE": self._cxl_mem_write,
             "HOST_CXL_MEM_BIRSP": self._cxl_mem_birsp,
+            # GAE host-direct CCI methods (0x5809 / 0x580A / 0x580B)
+            # The host sends these over the existing port-8000 TCP cci_fifo channel;
+            # no FM/MCTP path is required. External harnesses call these via HM port 8300.
+            "HOST_GAE_PROXY_GFD_MGMT": self._hm_gae_proxy_gfd_mgmt,
+            "HOST_GAE_GET_PROXY_STATUS": self._hm_gae_get_proxy_status,
+            "HOST_GAE_CANCEL_PROXY": self._hm_gae_cancel_proxy,
         }
         if hm_mode:
             self._host_mgr_conn_client = HostMgrConnClient(
@@ -99,6 +105,25 @@ class CxlSimpleHost(RunnableComponent):
         logger.info(self._create_message(f"CXL.mem BI-RSP: opcode=0x{opcode:x}"))
         res = await self._root_port_device.cxl_mem_birsp(opcode, bi_id, bi_tag)
         return Result(res)
+
+    # ── HostMgrConnClient wrappers for GAE proxy commands ─────────────────────
+    # The HostMgrConnClient dispatcher calls these when an external tool sends
+    # HOST_GAE_PROXY_GFD_MGMT / HOST_GAE_GET_PROXY_STATUS / HOST_GAE_CANCEL_PROXY
+    # on the HM port (8300). They unpack JSON-serialisable args and delegate to
+    # the typed gae_* methods below.
+
+    async def _hm_gae_proxy_gfd_mgmt(self, gfd_opcode: int, gfd_payload: list = None) -> Result:
+        """HostMgr entry-point: gfd_payload arrives as a list[int] from JSON."""
+        payload_bytes = bytes(gfd_payload) if gfd_payload else b""
+        return await self.gae_proxy_gfd_mgmt(gfd_opcode=gfd_opcode, gfd_payload=payload_bytes)
+
+    async def _hm_gae_get_proxy_status(self, thread_id: int) -> Result:
+        """HostMgr entry-point: thread_id is an int."""
+        return await self.gae_get_proxy_status(thread_id=thread_id)
+
+    async def _hm_gae_cancel_proxy(self, thread_id: int) -> Result:
+        """HostMgr entry-point: thread_id is an int."""
+        return await self.gae_cancel_proxy(thread_id=thread_id)
 
     # ── GAE Proxy Management (Host-direct CCI to GAE on switch USP) ──────────
     # CXL 4.0 §7.7.14.10 / §7.7.14.11 / §7.7.14.12

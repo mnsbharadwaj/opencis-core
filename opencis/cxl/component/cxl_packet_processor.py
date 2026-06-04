@@ -122,12 +122,25 @@ class CxlPacketProcessor(RunnableComponent):
             self._outgoing_dir = PROCESSOR_DIRECTION.TARGET_TO_HOST
 
             # Add common FIFOs
+            # For USP: cci_fifo.host_to_target carries CCI requests FROM the
+            # host (e.g. CxlSimpleHost GAE commands). cci_fifo.target_to_host
+            # carries CCI responses back to the host.
+            usp_cci_incoming = (
+                self._cxl_connection.cci_fifo.host_to_target
+                if component_type == CXL_COMPONENT_TYPE.USP
+                else None
+            )
+            usp_cci_outgoing = (
+                self._cxl_connection.cci_fifo.target_to_host
+                if component_type == CXL_COMPONENT_TYPE.USP
+                else None
+            )
             self._incoming = FifoGroup(
                 cfg_space=self._cxl_connection.cfg_fifo.host_to_target,
                 mmio=self._cxl_connection.mmio_fifo.host_to_target,
                 cxl_mem=None,
                 cxl_cache=None,
-                cci_fifo=None,
+                cci_fifo=usp_cci_incoming,
             )
 
             self._outgoing = FifoGroup(
@@ -135,7 +148,7 @@ class CxlPacketProcessor(RunnableComponent):
                 mmio=self._cxl_connection.mmio_fifo.target_to_host,
                 cxl_mem=None,
                 cxl_cache=None,
-                cci_fifo=None,
+                cci_fifo=usp_cci_outgoing,
             )
 
             # Add CXL.cache and CXL.mem FIFO based on the device type
@@ -383,6 +396,18 @@ class CxlPacketProcessor(RunnableComponent):
                         await self._fmld.upstream_fifo.host_to_target.put(cci_packet)
                     elif self._component_type == CXL_COMPONENT_TYPE.DSP:
                         await self._incoming.cci_fifo.put(packet)
+                    elif self._component_type == CXL_COMPONENT_TYPE.USP:
+                        # Host-direct CCI to GAE: put request into USP cci_fifo
+                        # so GaeCciMailbox can pick it up.
+                        if self._incoming.cci_fifo is None:
+                            logger.warning(self._create_message(
+                                "Got CCI packet on USP but cci_fifo not configured — dropping"
+                            ))
+                        else:
+                            logger.debug(self._create_message(
+                                "Received Host→GAE CCI packet — routing to cci_fifo"
+                            ))
+                            await self._incoming.cci_fifo.put(packet)
                 else:
                     message = f"Received unexpected {self._incoming_dir} packet"
                     logger.debug(self._create_message(message))
@@ -409,6 +434,12 @@ class CxlPacketProcessor(RunnableComponent):
         if self._outgoing.cci_fifo:
             logger.info(self._create_message("Sending disconnection notification to CCI"))
             await self._outgoing.cci_fifo.put(packet)
+        # For USP incoming cci_fifo (GaeCciMailbox), also send sentinel
+        if (
+            self._component_type == CXL_COMPONENT_TYPE.USP
+            and self._incoming.cci_fifo is not None
+        ):
+            await self._incoming.cci_fifo.put(packet)
 
     async def _process_outgoing_cfg_packets(self):
         logger.debug(self._create_message("Starting outgoing CFG FIFO processor"))
@@ -504,6 +535,19 @@ class CxlPacketProcessor(RunnableComponent):
                 packet = await self._outgoing.cci_fifo.get()
                 if self._is_disconnection_notification(packet):
                     break
+                self._writer.write(bytes(packet))
+                await self._writer.drain()
+            elif self._component_type == CXL_COMPONENT_TYPE.USP:
+                # GAE→Host CCI responses: read from cci_fifo.target_to_host
+                # and write back across TCP to the host.
+                if self._outgoing.cci_fifo is None:
+                    break
+                packet = await self._outgoing.cci_fifo.get()
+                if self._is_disconnection_notification(packet):
+                    break
+                logger.debug(self._create_message(
+                    "Sending GAE→Host CCI response packet to host"
+                ))
                 self._writer.write(bytes(packet))
                 await self._writer.drain()
             else:

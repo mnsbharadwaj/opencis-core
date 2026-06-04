@@ -23,6 +23,7 @@ from opencis.cxl.component.cxl_component import (
     PortConfig,
 )
 from opencis.cxl.component.dsp_cci_tunnel import DspCciTunnel
+from opencis.cxl.component.gae_cci_mailbox import GaeCciMailbox
 from opencis.cxl.cci.fabric_manager.gae.fabric_crawl_out import (
     DspTunnelRegistry,
     FabricCrawlOutCommand,
@@ -51,7 +52,17 @@ class MctpCciExecutor(RunnableComponent):
         port_configs: List[PortConfig],
         virtual_switch_manager=None,
         label: Optional[str] = None,
+        usp_connection: Optional[CxlConnection] = None,
     ):
+        """
+        Parameters
+        ----------
+        usp_connection:
+            If provided, a ``GaeCciMailbox`` is started on this connection so
+            that ``CxlSimpleHost`` can send GAE CCI commands (0x5800-0x580B)
+            directly to the GAE via the existing port-8000 TCP channel,
+            bypassing the FM/MCTP path entirely.
+        """
         super().__init__(label)
         self._message_tag_list = {}
         self._mctp_connection = mctp_connection
@@ -62,6 +73,17 @@ class MctpCciExecutor(RunnableComponent):
         # DSP CCI tunnel registry — one DspCciTunnel per DSP port
         self._tunnel_registry = DspTunnelRegistry()
         self._dsp_tunnels: List[DspCciTunnel] = []
+        # Optional host-direct GAE mailbox on the USP connection
+        self._gae_cci_mailbox: Optional[GaeCciMailbox] = None
+        if usp_connection is not None:
+            self._gae_cci_mailbox = GaeCciMailbox(
+                usp_connection=usp_connection,
+                cci_executor=self._cci_executor,
+                label="GaeCciMailbox:USP",
+            )
+            logger.debug(
+                "[MctpCciExecutor] GaeCciMailbox created for host-direct GAE CCI"
+            )
 
         for port_index, port_config in enumerate(port_configs):
             if port_config.type == PORT_TYPE.DSP:
@@ -260,6 +282,13 @@ class MctpCciExecutor(RunnableComponent):
         ]
         for downstream_connection in self._downstream_port_connections.values():
             tasks.append(create_task(self._process_outcoming_responses(downstream_connection)))
+
+        # Start GaeCciMailbox if host-direct GAE CCI is enabled
+        if self._gae_cci_mailbox is not None:
+            tasks.append(create_task(self._gae_cci_mailbox.run()))
+            await self._gae_cci_mailbox.wait_for_ready()
+            logger.info("[MctpCciExecutor] GaeCciMailbox started (host-direct GAE CCI active)")
+
         await self._change_status_to_running()
         await gather(*tasks)
 
@@ -267,6 +296,9 @@ class MctpCciExecutor(RunnableComponent):
         # Stop DSP CCI tunnel drain tasks
         for tunnel in self._dsp_tunnels:
             await tunnel.stop()
+        # Stop GaeCciMailbox if running
+        if self._gae_cci_mailbox is not None:
+            await self._gae_cci_mailbox.stop()
         # Stop the executor
         await self._mctp_connection.controller_to_ep.put(None)
         for downstream_connection in self._downstream_port_connections.values():

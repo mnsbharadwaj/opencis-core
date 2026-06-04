@@ -50,7 +50,9 @@ from opencis.cxl.transport.cxl_mem_packets import (
     is_cxl_mem_data,
     is_cxl_mem_completion,
 )
-from opencis.cxl.transport.packet_constants import CXL_MEM_M2SBIRSP_OPCODE
+from opencis.cxl.transport.packet_constants import CXL_MEM_M2SBIRSP_OPCODE, CCI_MCTP_MESSAGE_CATEGORY
+from opencis.cxl.transport.cci_packets import CciMessagePacket
+from opencis.cxl.cci.common import CCI_RETURN_CODE
 
 BRIDGE_CLASS = PCI_CLASS.BRIDGE << 8 | PCI_BRIDGE_SUBCLASS.PCI_BRIDGE
 
@@ -356,6 +358,87 @@ class CxlRootPortDevice(RunnableComponent):
         packet = CxlMemBIRspPacket.create(opcode, bi_id, bi_tag)
         await self._downstream_connection.cxl_mem_fifo.host_to_target.put(packet)
         return 0
+
+    # ── GAE CCI host-direct path ───────────────────────────────────────────────
+    # Used by CxlSimpleHost to send CCI commands (0x5800-0x580B) directly to
+    # the GAE on the switch USP without going through the FM/MCTP path.
+
+    async def gae_command(
+        self,
+        opcode: int,
+        payload: bytes = b"",
+        timeout: float = 5.0,
+        tag: int = 0,
+    ) -> tuple:
+        """
+        Send a CCI command to the GAE on the switch USP and wait for the response.
+
+        The request travels over cci_fifo.host_to_target (same TCP connection as
+        CXL.mem / PCIe config packets — port 8000). The switch's GaeCciMailbox
+        dispatches it and puts the response on cci_fifo.target_to_host.
+
+        Parameters
+        ----------
+        opcode:
+            CCI opcode (e.g. CCI_GAE_COMMAND_OPCODE.PROXY_GFD_MGMT_CMD = 0x5809).
+        payload:
+            Request payload bytes (may be empty).
+        timeout:
+            How long to wait for the GAE response before giving up.
+        tag:
+            Message tag (0-255). Should be unique per in-flight request.
+
+        Returns
+        -------
+        (CCI_RETURN_CODE, bytes)
+            Return code and response payload bytes from the GAE.
+        """
+        logger.info(self._create_message(
+            f"GAE CCI: opcode={opcode:#06x} payload_len={len(payload)}"
+        ))
+
+        # Build and send request packet
+        req_msg = CciMessagePacket.create(
+            data=payload,
+            message_category=CCI_MCTP_MESSAGE_CATEGORY.REQUEST,
+            opcode=opcode,
+            message_tag=tag,
+        )
+        await self._downstream_connection.cci_fifo.host_to_target.put(req_msg)
+
+        # Await response
+        try:
+            async with asyncio.timeout(timeout):
+                resp_packet = await self._downstream_connection.cci_fifo.target_to_host.get()
+        except asyncio.TimeoutError:
+            logger.error(self._create_message(
+                f"GAE CCI timeout waiting for response to opcode={opcode:#06x}"
+            ))
+            return (CCI_RETURN_CODE.INTERNAL_ERROR, b"")
+
+        if resp_packet is None:
+            logger.error(self._create_message("GAE CCI: received sentinel — connection closed"))
+            return (CCI_RETURN_CODE.INTERNAL_ERROR, b"")
+
+        # Parse response
+        if isinstance(resp_packet, CciMessagePacket):
+            resp_msg = resp_packet
+        elif hasattr(resp_packet, "get_cci_message"):
+            resp_msg = resp_packet.get_cci_message()
+        else:
+            resp_msg = CciMessagePacket(bytearray(bytes(resp_packet)))
+
+        rc_raw = resp_msg.cci_msg_header.return_code
+        try:
+            rc = CCI_RETURN_CODE(rc_raw)
+        except ValueError:
+            rc = CCI_RETURN_CODE.INTERNAL_ERROR
+
+        resp_payload = resp_msg.get_payload()
+        logger.info(self._create_message(
+            f"GAE CCI: opcode={opcode:#06x} rc={rc.name} resp_len={len(resp_payload)}"
+        ))
+        return (rc, resp_payload)
 
     """
     Helper functions for PCI Config Space access

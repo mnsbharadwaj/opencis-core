@@ -14,6 +14,18 @@ from opencis.cxl.device.root_port_device import CxlRootPortDevice
 from opencis.cxl.component.switch_connection_client import SwitchConnectionClient
 from opencis.cxl.component.host_manager import HostMgrConnClient, Result
 from opencis.cxl.component.common import CXL_COMPONENT_TYPE
+from opencis.cxl.cci.common import CCI_GAE_COMMAND_OPCODE, CCI_RETURN_CODE
+from opencis.cxl.cci.fabric_manager.gae.proxy_gfd_mgmt import (
+    ProxyGfdMgmtRequestPayload,
+    ProxyGfdMgmtResponsePayload,
+)
+from opencis.cxl.cci.fabric_manager.gae.get_proxy_thread_status import (
+    GetProxyThreadStatusRequestPayload,
+    GetProxyThreadStatusResponsePayload,
+)
+from opencis.cxl.cci.fabric_manager.gae.cancel_proxy_thread import (
+    CancelProxyThreadRequestPayload,
+)
 
 
 class CxlSimpleHost(RunnableComponent):
@@ -87,6 +99,107 @@ class CxlSimpleHost(RunnableComponent):
         logger.info(self._create_message(f"CXL.mem BI-RSP: opcode=0x{opcode:x}"))
         res = await self._root_port_device.cxl_mem_birsp(opcode, bi_id, bi_tag)
         return Result(res)
+
+    # ── GAE Proxy Management (Host-direct CCI to GAE on switch USP) ──────────
+    # CXL 4.0 §7.7.14.10 / §7.7.14.11 / §7.7.14.12
+    #
+    # These methods send CCI commands directly to the GAE via the existing
+    # TCP connection on port 8000 (cci_fifo channel). No FM/MCTP path needed.
+
+    async def gae_proxy_gfd_mgmt(
+        self,
+        gfd_opcode: int,
+        gfd_payload: bytes = b"",
+        timeout: float = 5.0,
+    ) -> Result:
+        """
+        Send Proxy GFD Mgmt Command (0x5809) to the GAE.
+
+        Tells the GAE to forward a CCI command to the GFD on its behalf and
+        return a thread_id for asynchronous status polling.
+
+        Parameters
+        ----------
+        gfd_opcode : CCI opcode to forward to the GFD (e.g. 0x0001 = Identify).
+        gfd_payload : Payload bytes for the inner GFD CCI command.
+        timeout : Seconds to wait for GAE acknowledgement.
+
+        Returns
+        -------
+        Result containing thread_id (int) or error string.
+        """
+        req_payload = ProxyGfdMgmtRequestPayload(
+            gfd_opcode=gfd_opcode,
+            gfd_payload=gfd_payload,
+        ).dump()
+        rc, resp_bytes = await self._root_port_device.gae_command(
+            opcode=CCI_GAE_COMMAND_OPCODE.PROXY_GFD_MGMT_CMD,
+            payload=req_payload,
+            timeout=timeout,
+        )
+        if rc != CCI_RETURN_CODE.SUCCESS:
+            return Result(f"GAE ProxyGfdMgmt failed: {rc.name}")
+        parsed = ProxyGfdMgmtResponsePayload.parse(resp_bytes)
+        logger.info(self._create_message(
+            f"GAE ProxyGfdMgmt: gfd_opcode={gfd_opcode:#06x} → thread_id={parsed.thread_id}"
+        ))
+        return Result(parsed.thread_id)
+
+    async def gae_get_proxy_status(
+        self,
+        thread_id: int,
+        timeout: float = 5.0,
+    ) -> Result:
+        """
+        Send Get Proxy Thread Status (0x580A) to the GAE.
+
+        Returns
+        -------
+        Result containing dict with keys:
+            thread_id, completed (bool), gfd_return_code (int),
+            gfd_response_payload (bytes).
+        """
+        req_payload = GetProxyThreadStatusRequestPayload(
+            thread_id=thread_id,
+        ).dump()
+        rc, resp_bytes = await self._root_port_device.gae_command(
+            opcode=CCI_GAE_COMMAND_OPCODE.GET_PROXY_THREAD_STATUS,
+            payload=req_payload,
+            timeout=timeout,
+        )
+        if rc != CCI_RETURN_CODE.SUCCESS:
+            return Result(f"GAE GetProxyStatus failed: {rc.name}")
+        parsed = GetProxyThreadStatusResponsePayload.parse(resp_bytes)
+        return Result({
+            "thread_id": parsed.thread_id,
+            "completed": parsed.completed,
+            "gfd_return_code": parsed.gfd_return_code,
+            "gfd_response_payload": list(parsed.gfd_response_payload),
+        })
+
+    async def gae_cancel_proxy(
+        self,
+        thread_id: int,
+        timeout: float = 5.0,
+    ) -> Result:
+        """
+        Send Cancel Proxy Thread (0x580B) to the GAE.
+
+        Returns
+        -------
+        Result containing 'SUCCESS' or error string.
+        """
+        req_payload = CancelProxyThreadRequestPayload(
+            thread_id=thread_id,
+        ).dump()
+        rc, _ = await self._root_port_device.gae_command(
+            opcode=CCI_GAE_COMMAND_OPCODE.CANCEL_PROXY_THREAD,
+            payload=req_payload,
+            timeout=timeout,
+        )
+        if rc != CCI_RETURN_CODE.SUCCESS:
+            return Result(f"GAE CancelProxy failed: {rc.name}")
+        return Result("SUCCESS")
 
     async def _run(self):
         tasks = [

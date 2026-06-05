@@ -34,6 +34,8 @@ from opencis.cxl.transport.packet_constants import (
 )
 
 from opencis.cxl.transport.cci_packets import (
+    CciMessagePacket,
+    CciPayloadPacket,
     CciRequestPacket,
     CciResponsePacket,
     GetLdInfoResponsePacket,
@@ -242,6 +244,11 @@ class CxlPacketProcessor(RunnableComponent):
 
     @staticmethod
     def _is_disconnection_notification(packet) -> bool:
+        # CciMessagePacket and other internal packets have no system_header —
+        # only wire-level BasePacket subclasses (sideband, TLP, CciPayloadPacket) do.
+        # Guard here so we never crash when an internal packet reaches this check.
+        if not hasattr(packet, "system_header"):
+            return False
         base_packet = cast(BasePacket, packet)
         if base_packet.system_header.payload_type != SYSTEM_PAYLOAD_TYPE.SIDEBAND:
             return False
@@ -407,7 +414,33 @@ class CxlPacketProcessor(RunnableComponent):
                             logger.debug(self._create_message(
                                 "Received Host→GAE CCI packet — routing to cci_fifo"
                             ))
-                            await self._incoming.cci_fifo.put(packet)
+                            # Over TCP the packet arrives as CciPayloadPacket.
+                            # Unwrap to CciMessagePacket so GaeCciMailbox (and in-process
+                            # tests) always see a plain CciMessagePacket on the Queue.
+                            if isinstance(packet, CciPayloadPacket):
+                                inner = packet.get_cci_message()
+                                await self._incoming.cci_fifo.put(inner)
+                            else:
+                                await self._incoming.cci_fifo.put(packet)
+                    elif self._component_type == CXL_COMPONENT_TYPE.R:
+                        # GAE→Host CCI response arriving from the switch over TCP.
+                        # CxlRootPortDevice.gae_command() is waiting on cci_fifo.target_to_host.
+                        # _incoming.cci_fifo IS cci_fifo.target_to_host for R type (line 103).
+                        if self._incoming.cci_fifo is not None:
+                            logger.debug(self._create_message(
+                                "Received GAE→Host CCI response — routing to cci_fifo.target_to_host"
+                            ))
+                            # Over TCP the packet arrives as CciPayloadPacket.
+                            # Unwrap to CciMessagePacket so gae_command() always gets one.
+                            if isinstance(packet, CciPayloadPacket):
+                                inner = packet.get_cci_message()
+                                await self._incoming.cci_fifo.put(inner)
+                            else:
+                                await self._incoming.cci_fifo.put(packet)
+                        else:
+                            logger.warning(self._create_message(
+                                "Got CCI packet on R type but cci_fifo is None — dropping"
+                            ))
                 else:
                     message = f"Received unexpected {self._incoming_dir} packet"
                     logger.debug(self._create_message(message))
@@ -540,6 +573,9 @@ class CxlPacketProcessor(RunnableComponent):
             elif self._component_type == CXL_COMPONENT_TYPE.USP:
                 # GAE→Host CCI responses: read from cci_fifo.target_to_host
                 # and write back across TCP to the host.
+                # GaeCciMailbox puts CciMessagePacket on the Queue; we wrap it in
+                # CciPayloadPacket (adds SystemHeader) so PacketReader on the R side
+                # identifies it as CCI via is_cci().
                 if self._outgoing.cci_fifo is None:
                     break
                 packet = await self._outgoing.cci_fifo.get()
@@ -548,7 +584,30 @@ class CxlPacketProcessor(RunnableComponent):
                 logger.debug(self._create_message(
                     "Sending GAE→Host CCI response packet to host"
                 ))
-                self._writer.write(bytes(packet))
+                if isinstance(packet, CciMessagePacket) and not isinstance(packet, CciPayloadPacket):
+                    wire_packet = CciPayloadPacket.create(packet)
+                else:
+                    wire_packet = packet
+                self._writer.write(bytes(wire_packet))
+                await self._writer.drain()
+            elif self._component_type == CXL_COMPONENT_TYPE.R:
+                # Host→GAE CCI requests: CxlRootPortDevice.gae_command() puts
+                # CciMessagePacket on cci_fifo.host_to_target. _outgoing.cci_fifo IS
+                # cci_fifo.host_to_target for R type (line 111). Wrap in CciPayloadPacket
+                # so PacketReader on the USP side identifies it as CCI via is_cci().
+                if self._outgoing.cci_fifo is None:
+                    break
+                packet = await self._outgoing.cci_fifo.get()
+                if self._is_disconnection_notification(packet):
+                    break
+                logger.debug(self._create_message(
+                    "Sending Host→GAE CCI request packet to switch"
+                ))
+                if isinstance(packet, CciMessagePacket) and not isinstance(packet, CciPayloadPacket):
+                    wire_packet = CciPayloadPacket.create(packet)
+                else:
+                    wire_packet = packet
+                self._writer.write(bytes(wire_packet))
                 await self._writer.drain()
             else:
                 break

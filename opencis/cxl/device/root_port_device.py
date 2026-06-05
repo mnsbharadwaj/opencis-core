@@ -51,7 +51,7 @@ from opencis.cxl.transport.cxl_mem_packets import (
     is_cxl_mem_completion,
 )
 from opencis.cxl.transport.packet_constants import CXL_MEM_M2SBIRSP_OPCODE, CCI_MCTP_MESSAGE_CATEGORY
-from opencis.cxl.transport.cci_packets import CciMessagePacket
+from opencis.cxl.transport.cci_packets import CciMessagePacket, CciPayloadPacket
 from opencis.cxl.cci.common import CCI_RETURN_CODE
 
 BRIDGE_CLASS = PCI_CLASS.BRIDGE << 8 | PCI_BRIDGE_SUBCLASS.PCI_BRIDGE
@@ -397,7 +397,10 @@ class CxlRootPortDevice(RunnableComponent):
             f"GAE CCI: opcode={opcode:#06x} payload_len={len(payload)}"
         ))
 
-        # Build and send request packet
+        # Build and send request packet.
+        # Plain CciMessagePacket on the Queue — in-process tests read this directly.
+        # CxlPacketProcessor(R)._process_outgoing_cci_packets() wraps it in
+        # CciPayloadPacket (adds SystemHeader) before serialising to TCP.
         req_msg = CciMessagePacket.create(
             data=payload,
             message_category=CCI_MCTP_MESSAGE_CATEGORY.REQUEST,
@@ -420,24 +423,35 @@ class CxlRootPortDevice(RunnableComponent):
             logger.error(self._create_message("GAE CCI: received sentinel — connection closed"))
             return (CCI_RETURN_CODE.INTERNAL_ERROR, b"")
 
-        # Parse response
+        # Parse response — two cases:
+        #   • In-process Queue path:  CciMessagePacket (from GaeCciMailbox)
+        #   • Real TCP path:          CciPayloadPacket (PacketReader identifies as CCI,
+        #                             wraps the inner CciMessagePacket bytes)
+        from opencis.cxl.transport.cci_packets import CciResponsePacket, CciPayloadPacket
         if isinstance(resp_packet, CciMessagePacket):
-            resp_msg = resp_packet
+            rc_raw = resp_packet.cci_msg_header.return_code
+            resp_payload = resp_packet.get_payload()
+        elif isinstance(resp_packet, CciPayloadPacket):
+            inner = resp_packet.get_cci_message()
+            rc_raw = inner.cci_msg_header.return_code
+            resp_payload = inner.get_payload()
+        elif isinstance(resp_packet, CciResponsePacket):
+            rc_raw = resp_packet.get_return_code() if hasattr(resp_packet, 'get_return_code') else 0
+            resp_payload = resp_packet.get_payload() if hasattr(resp_packet, 'get_payload') else b""
         elif hasattr(resp_packet, "get_cci_message"):
             resp_msg = resp_packet.get_cci_message()
+            rc_raw = resp_msg.cci_msg_header.return_code
+            resp_payload = resp_msg.get_payload()
         else:
             resp_msg = CciMessagePacket(bytearray(bytes(resp_packet)))
+            rc_raw = resp_msg.cci_msg_header.return_code
+            resp_payload = resp_msg.get_payload()
 
-        rc_raw = resp_msg.cci_msg_header.return_code
         try:
             rc = CCI_RETURN_CODE(rc_raw)
         except ValueError:
             rc = CCI_RETURN_CODE.INTERNAL_ERROR
 
-        resp_payload = resp_msg.get_payload()
-        logger.info(self._create_message(
-            f"GAE CCI: opcode={opcode:#06x} rc={rc.name} resp_len={len(resp_payload)}"
-        ))
         return (rc, resp_payload)
 
     """

@@ -49,43 +49,101 @@ class AppConfig:
     cxl_port_index: int = 0
     switch_port: int = 8000
     fastapi_port: int = 9000
-    model_name: str = "gemma3:4b"
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    # ── LLM config ────────────────────────────────────────────────────────────
+    # llm_source: one of  ollama | openai_compat | openai | gemini | anthropic |
+    #                     huggingface
+    #
+    # "ollama"        – local Ollama server (Qwen, Gemma, Llama, …)
+    # "openai_compat" – any OpenAI-compatible server (LM Studio, vLLM, etc.)
+    #                   set base_url to your server, e.g. http://localhost:1234/v1
+    # "openai"        – OpenAI cloud (GPT-4o, etc.)  needs api_token
+    # "gemini"        – Google Gemini cloud            needs api_token
+    # "anthropic"     – Anthropic Claude cloud         needs api_token
+    # "huggingface"   – HuggingFace Hub inference      needs api_token
     llm_source: str = "ollama"
-    api_token: str = ""
+    model_name: str = "qwen2.5:7b"   # default: local Qwen via Ollama
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    api_token: str = ""              # required for cloud providers
+    base_url: str = ""               # override for openai_compat / ollama endpoint
 
 
 app_config = AppConfig()
 
 
 def get_llm():
+    """Return a LangChain LLM/ChatModel based on app_config.
+
+    Supported sources
+    -----------------
+    ollama        – local Ollama server.  Works for Qwen, Gemma, Llama, Phi, …
+                   Change model_name to any model you have pulled in Ollama.
+    openai_compat – any server with an OpenAI-compatible /v1/chat/completions API
+                   (LM Studio, vLLM, llama.cpp server, Qwen via vLLM …).
+                   Set base_url to your server URL.
+    openai        – OpenAI cloud.  Needs api_token.
+    gemini        – Google Gemini cloud.  Needs api_token.
+    anthropic     – Anthropic Claude cloud.  Needs api_token.
+    huggingface   – HuggingFace Hub inference endpoint.  Needs api_token.
+    """
     # pylint: disable=import-outside-toplevel
-    source = app_config.llm_source
+    source = app_config.llm_source.lower()
     model = app_config.model_name
 
+    # ── Local: Ollama (Qwen, Gemma, Llama …) ─────────────────────────────────
     if source == "ollama":
-        from langchain_ollama.llms import OllamaLLM
+        from langchain_ollama import ChatOllama
+        kwargs = {"model": model}
+        if app_config.base_url:
+            kwargs["base_url"] = app_config.base_url  # default: http://localhost:11434
+        return ChatOllama(**kwargs)
 
-        return OllamaLLM(model=model)
-
-    if source == "huggingface":
-        from langchain.llms import huggingface_hub
-
-        return huggingface_hub.HuggingFaceHub(
-            repo_id=model, huggingfacehub_api_token=app_config.api_token
+    # ── Local/Remote: any OpenAI-compatible API ───────────────────────────────
+    # Works for: LM Studio, vLLM, llama.cpp --server, Qwen-via-vLLM, etc.
+    if source == "openai_compat":
+        from langchain_openai import ChatOpenAI
+        base_url = app_config.base_url or "http://localhost:1234/v1"
+        return ChatOpenAI(
+            model=model,
+            openai_api_key=app_config.api_token or "local",  # dummy key for local servers
+            openai_api_base=base_url,
         )
 
+    # ── Cloud: OpenAI ─────────────────────────────────────────────────────────
     if source == "openai":
-        from langchain.llms import openai
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            openai_api_key=app_config.api_token,
+        )
 
-        return openai.OpenAI(model_name=model, openai_api_key=app_config.api_token)
-
+    # ── Cloud: Google Gemini ──────────────────────────────────────────────────
     if source == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=app_config.api_token,
+        )
 
-        return ChatGoogleGenerativeAI(model=model, google_api_key=app_config.api_token)
+    # ── Cloud: Anthropic Claude ───────────────────────────────────────────────
+    if source == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(
+            model=model,
+            anthropic_api_key=app_config.api_token,
+        )
 
-    raise ValueError(f"Unsupported LLM source: {source}")
+    # ── Cloud: HuggingFace Hub ────────────────────────────────────────────────
+    if source == "huggingface":
+        from langchain_community.llms import HuggingFaceHub
+        return HuggingFaceHub(
+            repo_id=model,
+            huggingfacehub_api_token=app_config.api_token,
+        )
+
+    raise ValueError(
+        f"Unsupported llm_source='{source}'. "
+        "Choose: ollama | openai_compat | openai | gemini | anthropic | huggingface"
+    )
 
 
 async def my_sys_sw_app(**kwargs):
@@ -221,18 +279,34 @@ async def main():
 @click.option("--server-port", default=9000, type=int, help="Port to run the FastAPI server on.")
 @click.option(
     "--llm-source",
-    type=click.Choice(["ollama", "huggingface", "openai", "gemini"], case_sensitive=False),
+    type=click.Choice(
+        ["ollama", "openai_compat", "openai", "gemini", "anthropic", "huggingface"],
+        case_sensitive=False,
+    ),
     default="ollama",
-    help="Choose LLM provider: 'ollama', 'huggingface', 'openai', or 'gemini'.",
+    help=(
+        "LLM provider.  "
+        "'ollama' = local Ollama (Qwen/Gemma/Llama…).  "
+        "'openai_compat' = any OpenAI-compatible server (LM Studio, vLLM…).  "
+        "'openai' / 'gemini' / 'anthropic' = cloud providers.  "
+        "'huggingface' = HuggingFace Hub."
+    ),
 )
-@click.option("--api-token", type=str, default="", help="API token for remote LLM provider")
-@click.option("--model-name", type=str, default="gemma3:4b", help="Name of the model to use")
-def cli(switch_port, server_port, llm_source, api_token, model_name):
+@click.option("--api-token", type=str, default="", help="API token for cloud providers (not needed for local).")
+@click.option("--model-name", type=str, default="qwen2.5:7b", help="Model name (e.g. qwen2.5:7b, gpt-4o, gemini-1.5-pro).")
+@click.option(
+    "--base-url",
+    type=str,
+    default="",
+    help="Override API base URL (e.g. http://localhost:1234/v1 for LM Studio).",
+)
+def cli(switch_port, server_port, llm_source, api_token, model_name, base_url):
     app_config.fastapi_port = server_port
     app_config.llm_source = llm_source.lower()
     app_config.api_token = api_token
     app_config.switch_port = switch_port
     app_config.model_name = model_name
+    app_config.base_url = base_url
     asyncio.run(main())
 
 

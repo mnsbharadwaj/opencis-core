@@ -215,8 +215,9 @@ class PacketReader(LabeledComponent):
                 cci_packet = GetLdAllocationsRequestPacket(payload)
             elif cci_packet.get_command_opcode() == CCI_FM_API_COMMAND_OPCODE.SET_LD_ALLOCATIONS:
                 cci_packet = SetLdAllocationsRequestPacket(payload)
-            else:
-                raise Exception("Unsupported CCI packet")
+            # Generic fallback: any other CCI request opcode (e.g. GAE 0x5800–0x580B,
+            # PBR 0x5700–0x5709) is returned as a plain CciRequestPacket.
+            # _process_incoming_packets() will route it to the correct fifo.
         elif cci_base_packet.is_rsp():
             cci_packet = CciResponsePacket(payload)
             if cci_packet.get_command_opcode() == CCI_FM_API_COMMAND_OPCODE.GET_LD_INFO:
@@ -225,8 +226,7 @@ class PacketReader(LabeledComponent):
                 cci_packet = GetLdAllocationsResponsePacket(payload)
             elif cci_packet.get_command_opcode() == CCI_FM_API_COMMAND_OPCODE.SET_LD_ALLOCATIONS:
                 cci_packet = SetLdAllocationsResponsePacket(payload)
-            else:
-                raise Exception("Unsupported CCI packet")
+            # Generic fallback: any other CCI response opcode returned as CciResponsePacket.
         else:
             raise Exception("Unsupported CCI packet")
 

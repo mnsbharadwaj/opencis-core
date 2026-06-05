@@ -38,7 +38,7 @@ from opencis.util.component import RunnableComponent
 from opencis.cxl.component.cci_executor import CciExecutor, CciRequest, CciResponse
 from opencis.cxl.component.cxl_connection import CxlConnection
 from opencis.cxl.cci.common import CCI_RETURN_CODE
-from opencis.cxl.transport.cci_packets import CciMessagePacket
+from opencis.cxl.transport.cci_packets import CciMessagePacket, CciRequestPacket
 from opencis.cxl.transport.packet_constants import CCI_MCTP_MESSAGE_CATEGORY
 
 
@@ -93,29 +93,40 @@ class GaeCciMailbox(RunnableComponent):
                 logger.debug(self._create_message("Sentinel received — stopping mailbox"))
                 break
 
-            # ── Normalise to CciMessagePacket ─────────────────────────────────
+            # ── Normalise to (opcode, tag, payload) ──────────────────────────
+            # In-process Queue path: CciMessagePacket (from CxlRootPortDevice.gae_command)
+            # Real TCP path: CciRequestPacket (from PacketReader._get_cci_packet)
             try:
                 if isinstance(packet, CciMessagePacket):
-                    cci_msg = packet
+                    opcode  = packet.cci_msg_header.command_opcode
+                    tag     = packet.cci_msg_header.message_tag
+                    payload = packet.get_payload()
+                elif isinstance(packet, CciRequestPacket):
+                    # CciRequestPacket arrives over TCP after PacketReader decodes it
+                    opcode  = packet.get_command_opcode()
+                    tag     = getattr(packet, "message_tag", 0)
+                    payload = packet.get_payload() if hasattr(packet, "get_payload") else b""
                 elif hasattr(packet, "get_cci_message"):
                     cci_msg = packet.get_cci_message()
+                    opcode  = cci_msg.cci_msg_header.command_opcode
+                    tag     = cci_msg.cci_msg_header.message_tag
+                    payload = cci_msg.get_payload()
                 else:
                     cci_msg = CciMessagePacket(bytearray(bytes(packet)))
+                    opcode  = cci_msg.cci_msg_header.command_opcode
+                    tag     = cci_msg.cci_msg_header.message_tag
+                    payload = cci_msg.get_payload()
             except Exception as exc:
                 logger.error(self._create_message(
                     f"Failed to parse incoming CCI packet: {exc}"
                 ))
                 continue
 
-            opcode = cci_msg.cci_msg_header.command_opcode
-            tag    = cci_msg.cci_msg_header.message_tag
-            payload = cci_msg.get_payload()
-
             logger.debug(self._create_message(
                 f"Host→GAE CCI: opcode={opcode:#06x} tag={tag} payload_len={len(payload)}"
             ))
 
-            # ── Dispatch ──────────────────────────────────────────────────────
+            # ── Dispatch ────────────────────────────────────────────────────────────
             request = CciRequest(opcode=opcode, payload=payload)
             try:
                 response: CciResponse = await self._cci_executor.execute_command(request)
@@ -125,7 +136,10 @@ class GaeCciMailbox(RunnableComponent):
                 ))
                 response = CciResponse(return_code=CCI_RETURN_CODE.INTERNAL_ERROR)
 
-            # ── Send response back to host ────────────────────────────────────
+            # ── Send response back to host ───────────────────────────────────────────
+            # Put a plain CciMessagePacket on the Queue. For in-process tests
+            # (no TCP) consumers read this directly. The CxlPacketProcessor(USP)
+            # outgoing path wraps it in CciPayloadPacket before writing to TCP.
             resp_msg = CciMessagePacket.create(
                 data=response.payload or b"",
                 message_category=CCI_MCTP_MESSAGE_CATEGORY.RESPONSE,

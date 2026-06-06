@@ -34,15 +34,39 @@ from opencis.util.logger import logger
 
 @dataclass
 class CancelProxyThreadRequestPayload:
+    """Request payload for Cancel Proxy Thread.
+
+    Attributes:
+        thread_id: The proxy thread ID (assigned by Proxy GFD Mgmt Cmd)
+            to cancel.
+    """
+
     thread_id: int = 0
 
     PAYLOAD_SIZE = 2
 
     def dump(self) -> bytes:
+        """Serialize to 2-byte wire format.
+
+        Returns:
+            A 2-byte ``bytes`` object containing the thread_id as
+            a little-endian uint16.
+        """
         return pack("<H", self.thread_id)
 
     @classmethod
     def parse(cls, data: bytes) -> "CancelProxyThreadRequestPayload":
+        """Deserialize a 2-byte wire payload.
+
+        Args:
+            data: Raw bytes (>= 2 bytes).
+
+        Returns:
+            A populated ``CancelProxyThreadRequestPayload``.
+
+        Raises:
+            ValueError: If ``data`` is shorter than 2 bytes.
+        """
         if len(data) < cls.PAYLOAD_SIZE:
             raise ValueError("CancelProxyThreadRequestPayload: need 2 bytes")
         return cls(thread_id=unpack_from("<H", data, 0)[0])
@@ -63,10 +87,31 @@ class CancelProxyThreadCommand(CciForegroundCommand):
     OPCODE = CCI_GAE_COMMAND_OPCODE.CANCEL_PROXY_THREAD
 
     def __init__(self, gae_manager: GaeManager):
+        """Initialize the Cancel Proxy Thread command handler.
+
+        Args:
+            gae_manager: GAE manager that tracks proxy threads.
+        """
         super().__init__(self.OPCODE)
         self._gae_manager = gae_manager
 
     async def _execute(self, request: CciRequest) -> CciResponse:
+        """Execute the Cancel Proxy Thread command (Opcode 580Bh).
+
+        Parses the thread ID from the request and delegates to
+        GaeManager.cancel_proxy() to cancel the asyncio task.
+        If the thread has already completed, this is a no-op
+        that returns SUCCESS.
+
+        Args:
+            request: CCI request containing the serialized
+                CancelProxyThreadRequestPayload (2 bytes).
+
+        Returns:
+            A CciResponse with SUCCESS if cancellation succeeded
+            (or thread was already done), or INVALID_INPUT if the
+            thread ID is invalid.
+        """
         try:
             req_payload = CancelProxyThreadRequestPayload.parse(
                 request.payload or b"\x00\x00"
@@ -80,6 +125,14 @@ class CancelProxyThreadCommand(CciForegroundCommand):
 
     @staticmethod
     def create_cci_request(thread_id: int) -> CciRequest:
+        """Build a CCI request for Cancel Proxy Thread.
+
+        Args:
+            thread_id: The proxy thread ID to cancel.
+
+        Returns:
+            A CciRequest with opcode 580Bh and the serialized payload.
+        """
         req = CciRequest()
         req.opcode = CancelProxyThreadCommand.OPCODE
         req.payload = CancelProxyThreadRequestPayload(thread_id=thread_id).dump()

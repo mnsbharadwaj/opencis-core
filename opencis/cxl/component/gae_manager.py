@@ -54,6 +54,15 @@ _DspCciTunnel = None
 
 
 def _get_tunnel_class():
+    """Lazily import and cache the DspCciTunnel class.
+
+    Defers the import to avoid circular dependencies at module load time.
+    The class reference is cached in the module-level ``_DspCciTunnel``
+    variable so subsequent calls are free.
+
+    Returns:
+        The ``DspCciTunnel`` class object.
+    """
     global _DspCciTunnel  # pylint: disable=global-statement
     if _DspCciTunnel is None:
         from opencis.cxl.component.dsp_cci_tunnel import DspCciTunnel  # pylint: disable=import-outside-toplevel
@@ -116,6 +125,18 @@ class GaeManager:
         vppbs: Optional[List[GaeVppbInfo]] = None,
         label: Optional[str] = None,
     ):
+        """Initialize the GAE manager.
+
+        Sets up the vPPB list, GFD binding slots, and the proxy-thread
+        registry.  No GFD binding is active until ``set_gfd_tunnel()``
+        or ``set_gfd_executor()`` is called.
+
+        Args:
+            vppbs: Initial list of ``GaeVppbInfo`` entries describing
+                vPPBs with optional G-FAM support.  Empty for a
+                simple-device GFD.
+            label: Optional log prefix; defaults to ``"GaeManager"``.
+        """
         self._label = label or "GaeManager"
         self._vppbs: List[GaeVppbInfo] = vppbs or []
         # GFD binding — one of these two is set, tunnel takes priority
@@ -151,6 +172,12 @@ class GaeManager:
         logger.debug(f"[{self._label}] GFD executor bound (in-process mode)")
 
     def get_gfd_executor(self) -> Optional[CciExecutor]:
+        """Return the directly-bound GFD CciExecutor, or None if not set.
+
+        Returns:
+            The CciExecutor bound via ``set_gfd_executor()``, or None
+            if only a tunnel binding (or no binding) is active.
+        """
         return self._gfd_executor
 
     def has_gfd_binding(self) -> bool:
@@ -162,9 +189,20 @@ class GaeManager:
     # ------------------------------------------------------------------
 
     def get_vppb_count(self) -> int:
+        """Return the number of vPPBs tracked by this GAE manager.
+
+        Returns:
+            Integer count of vPPB entries (0 for a simple-device GFD).
+        """
         return len(self._vppbs)
 
     def get_vppbs(self) -> List[GaeVppbInfo]:
+        """Return a shallow copy of the vPPB info list.
+
+        Returns:
+            A new list containing all ``GaeVppbInfo`` entries.  Callers
+            may mutate the returned list without affecting internal state.
+        """
         return list(self._vppbs)
 
     # ------------------------------------------------------------------
@@ -172,6 +210,14 @@ class GaeManager:
     # ------------------------------------------------------------------
 
     def _alloc_thread_id(self) -> int:
+        """Allocate and return the next monotonically increasing thread ID.
+
+        Thread IDs are never reused within the lifetime of this manager
+        instance.  They start at 1 and increment by 1 for each allocation.
+
+        Returns:
+            A unique positive integer thread ID.
+        """
         tid = self._next_thread_id
         self._next_thread_id += 1
         return tid

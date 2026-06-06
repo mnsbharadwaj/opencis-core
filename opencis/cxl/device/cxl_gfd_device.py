@@ -87,6 +87,21 @@ class CxlGfdDevice(RunnableComponent):
         serial_number: str = "0000000000000001",
         label: Optional[str] = None,
     ):
+        """Initialize the CXL Generic Fabric Device.
+
+        Sets up the CCI executor and registers the built-in CCI Identify
+        command handler.  Only the ``cci_fifo`` channel of the transport
+        connection is used; ``mmio_fifo`` and ``cfg_fifo`` are intentionally
+        ignored because a GFD has no BAR and no PCIe config space.
+
+        Args:
+            transport_connection: CxlConnection provided by SwitchConnectionClient
+                or injected in test mode.  Only ``cci_fifo`` is consumed.
+            port_index: PBR switch DSP port number this device is attached to.
+            serial_number: 16-hex-digit serial number string used in the
+                CCI Identify response payload.
+            label: Optional log prefix; defaults to ``"GFD:Port{port_index}"``.
+        """
         label = label or f"GFD:Port{port_index}"
         super().__init__(label)
 
@@ -204,6 +219,15 @@ class CxlGfdDevice(RunnableComponent):
     # ── RunnableComponent lifecycle ────────────────────────────────────────────
 
     async def _run(self):
+        """Start the GFD's CCI executor and mailbox dispatch loop.
+
+        Launches two concurrent tasks:
+          1. ``CciExecutor.run()`` — the command dispatcher.
+          2. ``_run_cci_mailbox()`` — reads from cci_fifo and feeds the executor.
+
+        Waits for the CCI executor to be ready before marking this component
+        as RUNNING, then awaits both tasks until shutdown.
+        """
         logger.info(self._create_message(
             "Starting (spec-correct: NO BAR, NO PCIe config space, CCI-mailbox only)"
         ))
@@ -221,6 +245,11 @@ class CxlGfdDevice(RunnableComponent):
         logger.info(self._create_message("Stopped"))
 
     async def _stop(self):
+        """Stop the GFD by sending a sentinel and stopping the CCI executor.
+
+        Puts ``None`` on the cci_fifo.host_to_target queue to break the
+        ``_run_cci_mailbox()`` loop, then stops the CCI executor.
+        """
         logger.info(self._create_message("Stopping"))
         # Signal the mailbox loop to exit
         await self._cci_fifo.host_to_target.put(None)

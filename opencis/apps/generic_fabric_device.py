@@ -64,6 +64,25 @@ class GenericFabricDevice(RunnableComponent):
         test_mode: bool = False,
         cxl_connection=None,
     ):
+        """Initialize the GenericFabricDevice application wrapper.
+
+        Creates a SwitchConnectionClient (for TCP connectivity) and a
+        CxlGfdDevice (the actual CCI-mailbox device).  In test mode the
+        TCP layer is skipped and a pre-built CxlConnection is used instead.
+
+        Args:
+            host: Hostname or IP address of the CXL PBR switch.
+            port: TCP port number of the CXL PBR switch.
+            port_index: DSP port index on the PBR switch to connect to.
+            serial_number: 16-hex-digit serial number string for the GFD identity.
+            test_mode: If True, skip TCP; cxl_connection must be provided.
+            cxl_connection: Pre-built CxlConnection object (required in test mode,
+                must be None in non-test mode).
+
+        Raises:
+            AssertionError: If test_mode is True but cxl_connection is None,
+                or if test_mode is False but cxl_connection is provided.
+        """
         label = f"GFD:Port{port_index}"
         super().__init__(label)
 
@@ -101,6 +120,13 @@ class GenericFabricDevice(RunnableComponent):
     # ── RunnableComponent lifecycle ────────────────────────────────────────────
 
     async def _run(self):
+        """Start the GFD device and (optionally) the switch connection client.
+
+        In normal mode, both the SwitchConnectionClient and CxlGfdDevice are
+        started concurrently.  In test mode only the CxlGfdDevice is started.
+        The method waits for all sub-components to report ready before
+        transitioning this component to RUNNING, then awaits all run tasks.
+        """
         run_tasks = [create_task(self._gfd_device.run())]
         wait_tasks = [create_task(self._gfd_device.wait_for_ready())]
 
@@ -113,6 +139,11 @@ class GenericFabricDevice(RunnableComponent):
         await gather(*run_tasks)
 
     async def _stop(self):
+        """Stop all sub-components gracefully.
+
+        Stops the CxlGfdDevice and, in non-test mode, the
+        SwitchConnectionClient.  Both stop calls run concurrently.
+        """
         stop_tasks = [create_task(self._gfd_device.stop())]
         if not self._test_mode:
             stop_tasks.append(create_task(self._sw_conn_client.stop()))

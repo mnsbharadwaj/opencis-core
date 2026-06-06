@@ -35,6 +35,18 @@ from opencis.cxl.component.pbr_switch_manager import PbrSwitchManager
 
 @dataclass
 class IdentifyPbrSwitchResponsePayload:
+    """Response payload for Identify PBR Switch (Table 7-114).
+
+    Attributes:
+        gae_support_map: 8-byte bitmask where each bit position corresponds to
+            a VCS ID that has GAE support.
+        num_drts: Number of DPID Routing Tables in the switch (must be > 0).
+        num_rgts: Number of Routing Group Tables in the switch.
+        routing_caps: Dynamic Routing Mode Capabilities bitmask:
+            Bit 0 = Random, Bit 1 = Congestion Avoidance, Bit 2 = Advanced CA,
+            Bit 6 = Vendor Mode 1, Bit 7 = Vendor Mode 2.
+    """
+
     gae_support_map: int = 0       # 8 bytes
     num_drts: int = 1              # 1 byte
     num_rgts: int = 0              # 1 byte
@@ -43,6 +55,18 @@ class IdentifyPbrSwitchResponsePayload:
     PAYLOAD_SIZE = 12  # 0x00..0x0B
 
     def dump(self) -> bytes:
+        """Serialize this payload to its 12-byte wire format.
+
+        Wire layout (little-endian):
+            [0x00..0x07] gae_support_map (8 bytes)
+            [0x08]       num_drts (1 byte)
+            [0x09]       num_rgts (1 byte)
+            [0x0A]       Reserved
+            [0x0B]       routing_caps (1 byte)
+
+        Returns:
+            A 12-byte ``bytes`` object in the Table 7-114 wire format.
+        """
         data = bytearray(self.PAYLOAD_SIZE)
         data[0x00:0x08] = self.gae_support_map.to_bytes(8, "little")
         data[0x08] = self.num_drts & 0xFF
@@ -53,6 +77,17 @@ class IdentifyPbrSwitchResponsePayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "IdentifyPbrSwitchResponsePayload":
+        """Deserialize a 12-byte wire payload into this dataclass.
+
+        Args:
+            data: Raw bytes (>= 12 bytes) in the Table 7-114 wire format.
+
+        Returns:
+            A populated ``IdentifyPbrSwitchResponsePayload`` instance.
+
+        Raises:
+            ValueError: If ``data`` is shorter than PAYLOAD_SIZE (12 bytes).
+        """
         if len(data) < cls.PAYLOAD_SIZE:
             raise ValueError(
                 f"IdentifyPbrSwitchResponsePayload requires {cls.PAYLOAD_SIZE} bytes, "
@@ -66,6 +101,12 @@ class IdentifyPbrSwitchResponsePayload:
         )
 
     def get_pretty_print(self) -> str:
+        """Return a human-readable multiline summary of this payload.
+
+        Returns:
+            A formatted string listing GAE support map, DRT/RGT counts,
+            and individual dynamic routing mode capability bits.
+        """
         return (
             f"- GAE Support Map:    {self.gae_support_map:#018x}\n"
             f"- Num DRTs:           {self.num_drts}\n"
@@ -90,10 +131,30 @@ class IdentifyPbrSwitchCommand(CciForegroundCommand):
     OPCODE = CCI_FM_API_COMMAND_OPCODE.IDENTIFY_PBR_SWITCH
 
     def __init__(self, pbr_switch_manager: PbrSwitchManager):
+        """Initialize the Identify PBR Switch command handler.
+
+        Args:
+            pbr_switch_manager: The PBR switch manager that holds
+                switch capability information.
+        """
         super().__init__(self.OPCODE)
         self._pbr_switch_manager = pbr_switch_manager
 
     async def _execute(self, _: CciRequest) -> CciResponse:
+        """Execute the Identify PBR Switch command (Opcode 5700h).
+
+        Reads switch identity/capability info from PbrSwitchManager
+        and serializes it into the response payload.
+
+        This command has no input payload. The request argument is ignored.
+
+        Args:
+            _: The incoming CCI request (unused — no input payload).
+
+        Returns:
+            A CciResponse whose payload contains the serialized
+            IdentifyPbrSwitchResponsePayload (12 bytes, Table 7-114).
+        """
         info = self._pbr_switch_manager.get_identify_info()
         payload = IdentifyPbrSwitchResponsePayload(
             gae_support_map=info.gae_support_map,
@@ -107,10 +168,25 @@ class IdentifyPbrSwitchCommand(CciForegroundCommand):
 
     @staticmethod
     def create_cci_request() -> CciRequest:
+        """Build a CCI request for the Identify PBR Switch command.
+
+        This command requires no input payload.
+
+        Returns:
+            A CciRequest with opcode 5700h and an empty payload.
+        """
         req = CciRequest()
         req.opcode = IdentifyPbrSwitchCommand.OPCODE
         return req
 
     @staticmethod
     def parse_response_payload(data: bytes) -> IdentifyPbrSwitchResponsePayload:
+        """Parse the raw response bytes into a structured payload.
+
+        Args:
+            data: Raw response bytes (>= 12 bytes).
+
+        Returns:
+            A populated ``IdentifyPbrSwitchResponsePayload``.
+        """
         return IdentifyPbrSwitchResponsePayload.parse(data)

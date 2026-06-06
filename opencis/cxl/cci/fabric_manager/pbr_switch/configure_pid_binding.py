@@ -53,6 +53,21 @@ from opencis.util.logger import logger
 
 @dataclass
 class ConfigurePidBindingRequestPayload:
+    """Request payload for Configure PID Binding (Table 7-127).
+
+    Attributes:
+        operation: Bind (000b) or Unbind (001b) operation code.
+        target_vcs: Target VCS ID for the binding.
+        target_vppb: Target vPPB index (reserved for Host ES VCS).
+        pid: 12-bit PID of the remote binding target.
+        latency_entry_base_unit: HMAT latency base unit (8 bytes,
+            reserved for Host ES VCS).
+        latency_entry: HMAT latency entry value (2 bytes).
+        bw_entry_base_unit: HMAT bandwidth base unit (8 bytes,
+            reserved for Host ES VCS).
+        bw_entry: HMAT bandwidth entry value (2 bytes).
+    """
+
     operation: int = PidBindingOperation.BIND   # Bits[2:0]
     target_vcs: int = 0
     target_vppb: int = 0
@@ -65,8 +80,25 @@ class ConfigurePidBindingRequestPayload:
     PAYLOAD_SIZE = 0x1C  # 28 bytes
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-127 wire format (28 bytes).
+
+        Wire layout (little-endian):
+            [0x00]       Operation (lower 3 bits)
+            [0x01]       Target VCS ID
+            [0x02]       Target vPPB index
+            [0x03]       Reserved
+            [0x04..0x05] PID (lower 12 bits, mask 0x0FFF)
+            [0x06..0x07] Reserved
+            [0x08..0x0F] Latency Entry Base Unit (8 bytes)
+            [0x10..0x11] Latency Entry (uint16)
+            [0x12..0x19] BW Entry Base Unit (8 bytes)
+            [0x1A..0x1B] BW Entry (uint16)
+
+        Returns:
+            A 28-byte ``bytes`` object.
+        """
         data = bytearray(self.PAYLOAD_SIZE)
-        data[0x00] = self.operation & 0x07
+        data[0x00] = self.operation & 0x07  # Mask to 3-bit operation field
         data[0x01] = self.target_vcs & 0xFF
         data[0x02] = self.target_vppb & 0xFF
         # 0x03 reserved
@@ -80,6 +112,17 @@ class ConfigurePidBindingRequestPayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "ConfigurePidBindingRequestPayload":
+        """Deserialize a 28-byte Table 7-127 wire payload.
+
+        Args:
+            data: Raw bytes (>= 28 bytes).
+
+        Returns:
+            A populated ``ConfigurePidBindingRequestPayload``.
+
+        Raises:
+            ValueError: If ``data`` is shorter than PAYLOAD_SIZE (28).
+        """
         if len(data) < cls.PAYLOAD_SIZE:
             raise ValueError(
                 f"ConfigurePidBindingRequestPayload: need {cls.PAYLOAD_SIZE} bytes, "
@@ -117,12 +160,38 @@ class ConfigurePidBindingCommand(CciBackgroundCommand):
     OPCODE = CCI_FM_API_COMMAND_OPCODE.CONFIGURE_PID_BINDING
 
     def __init__(self, pbr_switch_manager: PbrSwitchManager):
+        """Initialize the Configure PID Binding command handler.
+
+        Args:
+            pbr_switch_manager: Manager responsible for PID binding
+                operations on the PBR switch.
+        """
         super().__init__(self.OPCODE)
         self._pbr_switch_manager = pbr_switch_manager
 
     async def _execute(
         self, request: CciRequest, callback: ProgressCallback
     ) -> CciResponse:
+        """Execute the Configure PID Binding command (Opcode 5706h).
+
+        This is a background command because PID binding requires
+        link-state transitions (Hot Reset → Detect → L0 via VDMs).
+        Progress is reported at 10%, 50%, and 100% via the callback.
+
+        Reads the operation, target VCS/vPPB, PID, and HMAT info
+        from the request payload. Delegates to
+        PbrSwitchManager.configure_pid_binding().
+
+        Args:
+            request: CCI request containing the serialized
+                ConfigurePidBindingRequestPayload (28 bytes).
+            callback: Async progress callback; called with percentage
+                values (10, 50, 100) as the operation progresses.
+
+        Returns:
+            A CciResponse with SUCCESS on success, INVALID_INPUT on
+            parse error, or the manager's error return code.
+        """
         try:
             payload = ConfigurePidBindingRequestPayload.parse(request.payload)
         except ValueError as e:
@@ -154,6 +223,14 @@ class ConfigurePidBindingCommand(CciBackgroundCommand):
 
     @staticmethod
     def create_cci_request(request: ConfigurePidBindingRequestPayload) -> CciRequest:
+        """Build a CCI request for Configure PID Binding.
+
+        Args:
+            request: Populated request payload to serialize.
+
+        Returns:
+            A CciRequest with opcode 5706h and the serialized payload.
+        """
         req = CciRequest()
         req.opcode = ConfigurePidBindingCommand.OPCODE
         req.payload = request.dump()
@@ -161,4 +238,12 @@ class ConfigurePidBindingCommand(CciBackgroundCommand):
 
     @staticmethod
     def parse_request_payload(data: bytes) -> ConfigurePidBindingRequestPayload:
+        """Parse raw request bytes into a structured payload.
+
+        Args:
+            data: Raw request bytes (>= 28 bytes).
+
+        Returns:
+            A populated ``ConfigurePidBindingRequestPayload``.
+        """
         return ConfigurePidBindingRequestPayload.parse(data)

@@ -65,6 +65,16 @@ class EmbeddedCciCommand:
     HEADER_SIZE = 4
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-117 wire format.
+
+        Wire layout (little-endian):
+            [0x00..0x01] Command Opcode (uint16)
+            [0x02..0x03] Payload Length (uint16)
+            [0x04..]     Command Payload (variable-length)
+
+        Returns:
+            Variable-length ``bytes`` (4 + len(payload)).
+        """
         hdr = bytearray(self.HEADER_SIZE)
         hdr[0:2] = pack("<H", self.opcode)
         hdr[2:4] = pack("<H", len(self.payload))
@@ -72,6 +82,18 @@ class EmbeddedCciCommand:
 
     @classmethod
     def parse(cls, data: bytes, offset: int = 0) -> "EmbeddedCciCommand":
+        """Deserialize an embedded CCI command from the buffer.
+
+        Args:
+            data: Buffer containing the serialized command.
+            offset: Byte offset into ``data`` where parsing begins.
+
+        Returns:
+            A populated ``EmbeddedCciCommand``.
+
+        Raises:
+            ValueError: If there are not enough bytes at the offset.
+        """
         if len(data) - offset < cls.HEADER_SIZE:
             raise ValueError("EmbeddedCciCommand: not enough bytes")
         opcode = unpack_from("<H", data, offset)[0]
@@ -80,6 +102,11 @@ class EmbeddedCciCommand:
         return cls(opcode=opcode, payload=payload)
 
     def to_cci_request(self) -> CciRequest:
+        """Convert this embedded command into a CciRequest.
+
+        Returns:
+            A CciRequest populated with this command's opcode and payload.
+        """
         return CciRequest(opcode=self.opcode, payload=self.payload)
 
 
@@ -92,10 +119,22 @@ class FabricCrawlOutRequestPayload:
     HEADER_SIZE = 4
 
     def __post_init__(self):
+        """Ensure embedded_cmd is never None after construction."""
         if self.embedded_cmd is None:
             self.embedded_cmd = EmbeddedCciCommand()
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-116 wire format.
+
+        Wire layout (little-endian):
+            [0x00]       Target Port Number (1 byte)
+            [0x01]       Reserved
+            [0x02..0x03] Embedded Command Size (uint16)
+            [0x04..]     Embedded CCI Command (Table 7-117)
+
+        Returns:
+            Variable-length ``bytes`` (4 + serialized embedded command size).
+        """
         cmd_bytes = self.embedded_cmd.dump()
         hdr = bytearray(self.HEADER_SIZE)
         hdr[0] = self.target_port & 0xFF
@@ -104,6 +143,18 @@ class FabricCrawlOutRequestPayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "FabricCrawlOutRequestPayload":
+        """Deserialize the Table 7-116 wire payload.
+
+        Args:
+            data: Raw bytes (>= 4-byte header + embedded command).
+
+        Returns:
+            A populated ``FabricCrawlOutRequestPayload``.
+
+        Raises:
+            ValueError: If the buffer is too short or the embedded
+                command is truncated.
+        """
         if len(data) < cls.HEADER_SIZE:
             raise ValueError("FabricCrawlOutRequestPayload: need at least 4 bytes")
         target_port = data[0]
@@ -123,6 +174,16 @@ class EmbeddedCciResponse:
     HEADER_SIZE = 4
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-119 wire format.
+
+        Wire layout (little-endian):
+            [0x00..0x01] Return Code (uint16)
+            [0x02..0x03] Reserved
+            [0x04..]     Response Payload (variable-length)
+
+        Returns:
+            Variable-length ``bytes`` (4 + len(payload)).
+        """
         hdr = bytearray(self.HEADER_SIZE)
         hdr[0:2] = pack("<H", self.return_code)
         # 0x02-0x03 reserved
@@ -130,6 +191,18 @@ class EmbeddedCciResponse:
 
     @classmethod
     def parse(cls, data: bytes, offset: int = 0) -> "EmbeddedCciResponse":
+        """Deserialize an embedded CCI response from the buffer.
+
+        Args:
+            data: Buffer containing the serialized response.
+            offset: Byte offset into ``data`` where parsing begins.
+
+        Returns:
+            A populated ``EmbeddedCciResponse``.
+
+        Raises:
+            ValueError: If there are not enough bytes at the offset.
+        """
         if len(data) - offset < cls.HEADER_SIZE:
             raise ValueError("EmbeddedCciResponse: not enough bytes")
         rc = unpack_from("<H", data, offset)[0]
@@ -138,6 +211,15 @@ class EmbeddedCciResponse:
 
     @classmethod
     def from_cci_response(cls, resp: CciResponse) -> "EmbeddedCciResponse":
+        """Construct from a CciResponse object.
+
+        Args:
+            resp: The CciResponse from the downstream GFD device.
+
+        Returns:
+            An ``EmbeddedCciResponse`` wrapping the GFD's return code
+            and payload.
+        """
         return cls(
             return_code=int(resp.return_code),
             payload=resp.payload or b"",
@@ -152,10 +234,21 @@ class FabricCrawlOutResponsePayload:
     HEADER_SIZE = 4
 
     def __post_init__(self):
+        """Ensure embedded_resp is never None after construction."""
         if self.embedded_resp is None:
             self.embedded_resp = EmbeddedCciResponse()
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-118 wire format.
+
+        Wire layout (little-endian):
+            [0x00..0x01] Embedded Response Size (uint16)
+            [0x02..0x03] Reserved
+            [0x04..]     Embedded CCI Response (Table 7-119)
+
+        Returns:
+            Variable-length ``bytes`` (4 + serialized embedded response size).
+        """
         resp_bytes = self.embedded_resp.dump()
         hdr = bytearray(self.HEADER_SIZE)
         hdr[0:2] = pack("<H", len(resp_bytes))
@@ -164,6 +257,18 @@ class FabricCrawlOutResponsePayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "FabricCrawlOutResponsePayload":
+        """Deserialize the Table 7-118 wire payload.
+
+        Args:
+            data: Raw bytes (>= 4-byte header + embedded response).
+
+        Returns:
+            A populated ``FabricCrawlOutResponsePayload``.
+
+        Raises:
+            ValueError: If the buffer is too short or the embedded
+                response is truncated.
+        """
         if len(data) < cls.HEADER_SIZE:
             raise ValueError("FabricCrawlOutResponsePayload: need at least 4 bytes")
         resp_size = unpack_from("<H", data, 0)[0]
@@ -173,6 +278,12 @@ class FabricCrawlOutResponsePayload:
         return cls(embedded_resp=embedded)
 
     def get_pretty_print(self) -> str:
+        """Return a human-readable summary of the fabric crawl response.
+
+        Returns:
+            A formatted string showing the embedded return code name
+            and response payload size.
+        """
         rc = CCI_RETURN_CODE(self.embedded_resp.return_code)
         return (
             f"- Embedded RC:         {rc.name}\n"
@@ -193,15 +304,35 @@ class DspTunnelRegistry:
     """
 
     def __init__(self):
+        """Initialize an empty tunnel registry."""
         self._tunnels: dict = {}
 
     def register(self, port_index: int, tunnel: DspCciTunnel) -> None:
+        """Register a DspCciTunnel for a given DSP port index.
+
+        Args:
+            port_index: The physical DSP port number.
+            tunnel: The tunnel to use for that port.
+        """
         self._tunnels[port_index] = tunnel
 
     def get(self, port_index: int) -> Optional[DspCciTunnel]:
+        """Look up the tunnel for a given DSP port index.
+
+        Args:
+            port_index: The physical DSP port number.
+
+        Returns:
+            The registered ``DspCciTunnel``, or None if not found.
+        """
         return self._tunnels.get(port_index)
 
     def port_indices(self):
+        """Return a list of all registered DSP port indices.
+
+        Returns:
+            A list of integer port indices.
+        """
         return list(self._tunnels.keys())
 
 
@@ -226,10 +357,33 @@ class FabricCrawlOutCommand(CciForegroundCommand):
     OPCODE = CCI_FM_API_COMMAND_OPCODE.FABRIC_CRAWL_OUT
 
     def __init__(self, tunnel_registry: DspTunnelRegistry):
+        """Initialize the Fabric Crawl Out command handler.
+
+        Args:
+            tunnel_registry: Registry mapping DSP port indices to
+                their CCI tunnels.
+        """
         super().__init__(self.OPCODE)
         self._registry = tunnel_registry
 
     async def _execute(self, request: CciRequest) -> CciResponse:
+        """Execute the Fabric Crawl Out command (Opcode 5701h).
+
+        Parses the target DSP port and embedded CCI command from the
+        request, looks up the DspCciTunnel for that port, forwards
+        the embedded command over the tunnel (cci_fifo), and wraps
+        the GFD's response in the Fabric Crawl Out response payload.
+
+        Args:
+            request: CCI request containing the serialized
+                FabricCrawlOutRequestPayload.
+
+        Returns:
+            A CciResponse whose payload contains the serialized
+            FabricCrawlOutResponsePayload (wrapping the GFD's
+            embedded response), INVALID_INPUT if the request is
+            malformed or no tunnel exists for the target port.
+        """
         if not request.payload or len(request.payload) < FabricCrawlOutRequestPayload.HEADER_SIZE:
             logger.error(self._create_message("payload too short"))
             return CciResponse(return_code=CCI_RETURN_CODE.INVALID_INPUT)
@@ -267,6 +421,16 @@ class FabricCrawlOutCommand(CciForegroundCommand):
     def create_cci_request(
         target_port: int, gfd_opcode: int, gfd_payload: bytes = b""
     ) -> CciRequest:
+        """Build a CCI request for Fabric Crawl Out.
+
+        Args:
+            target_port: DSP port index to send the embedded command to.
+            gfd_opcode: CCI opcode of the embedded command for the GFD.
+            gfd_payload: Optional payload for the embedded CCI command.
+
+        Returns:
+            A CciRequest with opcode 5701h and the serialized payload.
+        """
         embedded = EmbeddedCciCommand(opcode=gfd_opcode, payload=gfd_payload)
         req_payload = FabricCrawlOutRequestPayload(
             target_port=target_port, embedded_cmd=embedded
@@ -278,4 +442,12 @@ class FabricCrawlOutCommand(CciForegroundCommand):
 
     @staticmethod
     def parse_response_payload(data: bytes) -> FabricCrawlOutResponsePayload:
+        """Parse raw response bytes into a structured payload.
+
+        Args:
+            data: Raw response bytes (>= 4 bytes).
+
+        Returns:
+            A populated ``FabricCrawlOutResponsePayload``.
+        """
         return FabricCrawlOutResponsePayload.parse(data)

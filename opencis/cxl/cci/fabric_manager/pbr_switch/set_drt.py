@@ -46,11 +46,33 @@ from opencis.util.logger import logger
 
 @dataclass
 class SetDrtRequestPayload:
+    """Request payload for Set DRT (Table 7-134).
+
+    Attributes:
+        drt_index: Index of the DRT table to write (0-based).
+        start_entry: Starting DPID index within the DRT where entries
+            will be written.
+        entries: List of DrtEntry objects to write sequentially starting
+            at start_entry.
+    """
+
     drt_index: int = 0
     start_entry: int = 0
     entries: List[DrtEntry] = field(default_factory=list)
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-134 wire format.
+
+        Wire layout (little-endian):
+            [0x00]       DRT Index (1 byte)
+            [0x01]       Reserved
+            [0x02..0x03] Number of Entries (uint16)
+            [0x04..0x05] Start Entry DPID index (uint16)
+            [0x06..]     DRT Entry list (2 bytes each, Table 7-133)
+
+        Returns:
+            Variable-length ``bytes`` (6 + 2 × len(entries)).
+        """
         header = bytearray(6)
         header[0x00] = self.drt_index & 0xFF
         # 0x01 reserved
@@ -61,6 +83,18 @@ class SetDrtRequestPayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "SetDrtRequestPayload":
+        """Deserialize the Table 7-134 wire payload.
+
+        Args:
+            data: Raw bytes (>= 6-byte header + 2 × N entry bytes).
+
+        Returns:
+            A populated ``SetDrtRequestPayload``.
+
+        Raises:
+            ValueError: If the buffer is too short or the entry list
+                is truncated.
+        """
         if len(data) < 6:
             raise ValueError("SetDrtRequestPayload: need at least 6 bytes")
         drt_index = data[0x00]
@@ -90,10 +124,30 @@ class SetDrtCommand(CciForegroundCommand):
     OPCODE = CCI_FM_API_COMMAND_OPCODE.SET_DRT
 
     def __init__(self, pbr_switch_manager: PbrSwitchManager):
+        """Initialize the Set DRT command handler.
+
+        Args:
+            pbr_switch_manager: Manager that owns the DRT tables in
+                the PBR switch.
+        """
         super().__init__(self.OPCODE)
         self._pbr_switch_manager = pbr_switch_manager
 
     async def _execute(self, request: CciRequest) -> CciResponse:
+        """Execute the Set DRT command (Opcode 5709h).
+
+        Parses the request payload and delegates to
+        PbrSwitchManager.set_drt() to program the specified DRT entries.
+
+        Args:
+            request: CCI request containing the serialized
+                SetDrtRequestPayload.
+
+        Returns:
+            A CciResponse with SUCCESS if all entries were written
+            successfully, INVALID_INPUT on parse error, or the
+            manager's error return code.
+        """
         try:
             payload = SetDrtRequestPayload.parse(request.payload)
         except ValueError as e:
@@ -112,6 +166,14 @@ class SetDrtCommand(CciForegroundCommand):
 
     @staticmethod
     def create_cci_request(request: SetDrtRequestPayload) -> CciRequest:
+        """Build a CCI request for Set DRT.
+
+        Args:
+            request: Populated request payload to serialize.
+
+        Returns:
+            A CciRequest with opcode 5709h and the serialized payload.
+        """
         req = CciRequest()
         req.opcode = SetDrtCommand.OPCODE
         req.payload = request.dump()
@@ -119,4 +181,12 @@ class SetDrtCommand(CciForegroundCommand):
 
     @staticmethod
     def parse_request_payload(data: bytes) -> SetDrtRequestPayload:
+        """Parse raw request bytes into a structured payload.
+
+        Args:
+            data: Raw request bytes.
+
+        Returns:
+            A populated ``SetDrtRequestPayload``.
+        """
         return SetDrtRequestPayload.parse(data)

@@ -42,15 +42,39 @@ from opencis.util.logger import logger
 
 @dataclass
 class GetProxyThreadStatusRequestPayload:
+    """Request payload for Get Proxy Thread Status.
+
+    Attributes:
+        thread_id: The proxy thread ID assigned by a previous
+            Proxy GFD Management Command.
+    """
+
     thread_id: int = 0
 
     PAYLOAD_SIZE = 2
 
     def dump(self) -> bytes:
+        """Serialize to 2-byte wire format.
+
+        Returns:
+            A 2-byte ``bytes`` object containing the thread_id as
+            a little-endian uint16.
+        """
         return pack("<H", self.thread_id)
 
     @classmethod
     def parse(cls, data: bytes) -> "GetProxyThreadStatusRequestPayload":
+        """Deserialize a 2-byte wire payload.
+
+        Args:
+            data: Raw bytes (>= 2 bytes).
+
+        Returns:
+            A populated ``GetProxyThreadStatusRequestPayload``.
+
+        Raises:
+            ValueError: If ``data`` is shorter than 2 bytes.
+        """
         if len(data) < cls.PAYLOAD_SIZE:
             raise ValueError("GetProxyThreadStatusRequestPayload: need 2 bytes")
         return cls(thread_id=unpack_from("<H", data, 0)[0])
@@ -73,6 +97,19 @@ class GetProxyThreadStatusResponsePayload:
     HEADER_SIZE = 8
 
     def dump(self) -> bytes:
+        """Serialize to the Get Proxy Thread Status response wire format.
+
+        Wire layout (little-endian):
+            [0x00..0x01] Proxy Thread ID (uint16)
+            [0x02]       Status byte (Bit 0 = Completed)
+            [0x03]       Reserved
+            [0x04..0x05] GFD Return Code (uint16, valid when completed)
+            [0x06..0x07] Reserved
+            [0x08..]     GFD Response Payload (present when completed)
+
+        Returns:
+            Variable-length ``bytes`` (8 + len(gfd_response_payload)).
+        """
         header = bytearray(self.HEADER_SIZE)
         header[0x00:0x02] = pack("<H", self.thread_id)
         header[0x02] = 0x01 if self.completed else 0x00
@@ -83,6 +120,17 @@ class GetProxyThreadStatusResponsePayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "GetProxyThreadStatusResponsePayload":
+        """Deserialize the Get Proxy Thread Status response wire format.
+
+        Args:
+            data: Raw bytes (>= 8-byte header + optional GFD payload).
+
+        Returns:
+            A populated ``GetProxyThreadStatusResponsePayload``.
+
+        Raises:
+            ValueError: If ``data`` is shorter than HEADER_SIZE (8).
+        """
         if len(data) < cls.HEADER_SIZE:
             raise ValueError(
                 f"GetProxyThreadStatusResponsePayload: need {cls.HEADER_SIZE} bytes"
@@ -99,6 +147,12 @@ class GetProxyThreadStatusResponsePayload:
         )
 
     def get_pretty_print(self) -> str:
+        """Return a human-readable multiline summary of the thread status.
+
+        Returns:
+            A formatted string showing thread ID, completion status,
+            GFD return code, and response payload size.
+        """
         return (
             f"- Thread ID:     {self.thread_id}\n"
             f"- Completed:     {self.completed}\n"
@@ -122,10 +176,30 @@ class GetProxyThreadStatusCommand(CciForegroundCommand):
     OPCODE = CCI_GAE_COMMAND_OPCODE.GET_PROXY_THREAD_STATUS
 
     def __init__(self, gae_manager: GaeManager):
+        """Initialize the Get Proxy Thread Status command handler.
+
+        Args:
+            gae_manager: GAE manager that tracks proxy thread state.
+        """
         super().__init__(self.OPCODE)
         self._gae_manager = gae_manager
 
     async def _execute(self, request: CciRequest) -> CciResponse:
+        """Execute the Get Proxy Thread Status command (Opcode 580Ah).
+
+        Looks up the specified proxy thread in GaeManager and returns
+        its current state. If the thread has completed, the GFD's
+        return code and response payload are included.
+
+        Args:
+            request: CCI request containing the serialized
+                GetProxyThreadStatusRequestPayload (2 bytes).
+
+        Returns:
+            A CciResponse whose payload contains the serialized
+            GetProxyThreadStatusResponsePayload, or INVALID_INPUT
+            if the thread ID is not found or the request is malformed.
+        """
         try:
             req_payload = GetProxyThreadStatusRequestPayload.parse(
                 request.payload or b"\x00\x00"
@@ -157,6 +231,14 @@ class GetProxyThreadStatusCommand(CciForegroundCommand):
 
     @staticmethod
     def create_cci_request(thread_id: int) -> CciRequest:
+        """Build a CCI request for Get Proxy Thread Status.
+
+        Args:
+            thread_id: The proxy thread ID to query.
+
+        Returns:
+            A CciRequest with opcode 580Ah and the serialized payload.
+        """
         req = CciRequest()
         req.opcode = GetProxyThreadStatusCommand.OPCODE
         req.payload = GetProxyThreadStatusRequestPayload(thread_id=thread_id).dump()
@@ -164,4 +246,12 @@ class GetProxyThreadStatusCommand(CciForegroundCommand):
 
     @staticmethod
     def parse_response_payload(data: bytes) -> GetProxyThreadStatusResponsePayload:
+        """Parse raw response bytes into a structured payload.
+
+        Args:
+            data: Raw response bytes (>= 8 bytes).
+
+        Returns:
+            A populated ``GetProxyThreadStatusResponsePayload``.
+        """
         return GetProxyThreadStatusResponsePayload.parse(data)

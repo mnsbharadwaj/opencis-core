@@ -71,6 +71,19 @@ class GaeCciMailbox(RunnableComponent):
         cci_executor: CciExecutor,
         label: Optional[str] = None,
     ):
+        """Initialize the GAE CCI mailbox.
+
+        Extracts the ``cci_fifo`` from the USP connection and stores a
+        reference to the shared CCI executor that has all GAE command
+        handlers registered.
+
+        Args:
+            usp_connection: The CxlConnection for the USP port (port 0).
+                Only the ``cci_fifo`` channel is consumed.
+            cci_executor: Shared CciExecutor instance with GAE commands
+                (0x5800–0x580B) already registered.
+            label: Optional logging label; defaults to ``"GaeCciMailbox"``.
+        """
         super().__init__(label or "GaeCciMailbox")
         self._cci_fifo = usp_connection.cci_fifo
         self._cci_executor = cci_executor
@@ -161,11 +174,22 @@ class GaeCciMailbox(RunnableComponent):
     # ── RunnableComponent lifecycle ────────────────────────────────────────────
 
     async def _run(self) -> None:
+        """Start the host-direct GAE CCI mailbox.
+
+        Immediately transitions to RUNNING (no sub-components to wait on),
+        then enters the ``_run_mailbox()`` dispatch loop.  Returns when
+        a sentinel ``None`` is received on the FIFO.
+        """
         logger.info(self._create_message("Starting — host-direct GAE CCI mailbox active"))
         await self._change_status_to_running()
         await self._run_mailbox()
         logger.info(self._create_message("Stopped"))
 
     async def _stop(self) -> None:
+        """Stop the mailbox by injecting a sentinel into the host_to_target FIFO.
+
+        The ``None`` sentinel causes ``_run_mailbox()`` to break out of its
+        infinite loop and return, which in turn completes ``_run()``.
+        """
         logger.info(self._create_message("Stopping"))
         await self._cci_fifo.host_to_target.put(None)

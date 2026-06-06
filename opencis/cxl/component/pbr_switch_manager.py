@@ -52,15 +52,44 @@ class DrtEntry:
     routing_target: int = 0  # physical port number OR RGT entry index
 
     def dump(self) -> bytes:
+        """Serialize this DRT entry to its 2-byte wire format.
+
+        Wire format (Table 7-133, CXL 4.0 §7.7.13.9):
+            Byte 0: Bits[1:0] = entry_type (2-bit enum), Bits[7:2] = Reserved (0)
+            Byte 1: routing_target (8-bit physical port number or RGT index)
+
+        Returns:
+            A 2-byte ``bytes`` object representing the serialized entry.
+        """
         data = bytearray(2)
+        # Bits[1:0] of byte 0 hold the 2-bit entry type
         data[0] = int(self.entry_type) & 0x03
+        # Byte 1 holds the 8-bit routing target (port or RGT index)
         data[1] = self.routing_target & 0xFF
         return bytes(data)
 
     @classmethod
     def parse(cls, data: bytes, offset: int = 0) -> "DrtEntry":
+        """Deserialize a DRT entry from its 2-byte wire format.
+
+        Parses 2 bytes starting at ``offset`` in ``data`` according to
+        the wire format described in ``dump()``.  Unknown entry_type
+        values (e.g. 0b11) are mapped to ``DrtEntryType.RESERVED``.
+
+        Args:
+            data: Raw byte buffer containing at least ``offset + 2`` bytes.
+            offset: Starting byte position within ``data``.
+
+        Returns:
+            A new ``DrtEntry`` instance populated from the wire data.
+
+        Raises:
+            ValueError: If ``data`` is too short to contain a 2-byte entry
+                at the given offset.
+        """
         if len(data) < offset + 2:
             raise ValueError("DrtEntry requires at least 2 bytes")
+        # Extract 2-bit entry type from bits[1:0] of the first byte
         entry_type_val = data[offset] & 0x03
         try:
             entry_type = DrtEntryType(entry_type_val)
@@ -163,17 +192,30 @@ class PbrSwitchInfo:
     vendor_routing_mode2_supported: bool = False
 
     def routing_caps_byte(self) -> int:
+        """Pack dynamic routing mode capability flags into a single byte.
+
+        Bit layout (Table 7-114, byte Bh):
+            Bit 0: Random routing supported
+            Bit 1: Congestion Avoidance supported
+            Bit 2: Advanced CA supported
+            Bits 3-5: Reserved
+            Bit 6: Vendor Routing Mode 1 supported
+            Bit 7: Vendor Routing Mode 2 supported
+
+        Returns:
+            An integer (0x00–0xFF) with the capability bits set.
+        """
         val = 0
         if self.random_supported:
-            val |= 0x01
+            val |= 0x01        # Bit 0
         if self.congestion_avoidance_supported:
-            val |= 0x02
+            val |= 0x02        # Bit 1
         if self.advanced_ca_supported:
-            val |= 0x04
+            val |= 0x04        # Bit 2
         if self.vendor_routing_mode1_supported:
-            val |= 0x40
+            val |= 0x40        # Bit 6
         if self.vendor_routing_mode2_supported:
-            val |= 0x80
+            val |= 0x80        # Bit 7
         return val
 
 
@@ -209,6 +251,22 @@ class PbrSwitchManager:
         pid_targets: Optional[List[PidTarget]] = None,
         label: Optional[str] = None,
     ):
+        """Initialize the PBR switch manager.
+
+        Creates the DRT table array (all entries INVALID), the PID target
+        list, and empty PID assignment / binding dictionaries.
+
+        Args:
+            num_drts: Number of DPID Routing Tables to allocate.  Must be
+                at least 1 (reported in Identify PBR Switch response).
+            num_rgts: Number of Routing Group Tables (currently unused;
+                reserved for multicast / group routing).
+            pid_targets: Pre-configured list of ``PidTarget`` entries that
+                this switch exposes for PID assignment.  If empty, the
+                manager operates in "open mode" where any target_id is
+                accepted by ``assign_pid()``.
+            label: Optional log prefix; defaults to ``"PbrSwitchManager"``.
+        """
         self._label = label or "PbrSwitchManager"
         self._switch_info = PbrSwitchInfo(num_drts=num_drts, num_rgts=num_rgts)
         # DRT tables — all entries initialised as INVALID (no routing until FM programs them)
@@ -240,9 +298,28 @@ class PbrSwitchManager:
     # ------------------------------------------------------------------
 
     def get_pid_target_count(self) -> int:
+        """Return the total number of configured PID targets.
+
+        Returns:
+            Integer count of PidTarget entries in this switch.
+        """
         return len(self._pid_targets)
 
     def get_pid_target_list(self, start_index: int, num_targets: int) -> List[PidTarget]:
+        """Return a slice of the PID target list.
+
+        Used by Get PID Target List (CCI opcode 0x5703) to support
+        paginated reads of the target array.
+
+        Args:
+            start_index: Zero-based index of the first target to return.
+            num_targets: Maximum number of targets to return.
+
+        Returns:
+            A list of ``PidTarget`` entries from ``start_index`` up to
+            ``start_index + num_targets`` (may be shorter if the list
+            is exhausted).
+        """
         return self._pid_targets[start_index: start_index + num_targets]
 
     # ------------------------------------------------------------------
@@ -385,6 +462,16 @@ class PbrSwitchManager:
     # ------------------------------------------------------------------
 
     def get_pid_binding(self, vcs_id: int, vppb_id: int) -> Optional[PidBinding]:
+        """Look up the PID binding for a specific (vcs_id, vppb_id) pair.
+
+        Args:
+            vcs_id: Virtual CXL Switch identifier.
+            vppb_id: Virtual PPB identifier within that VCS.
+
+        Returns:
+            The ``PidBinding`` if the pair is currently bound, or ``None``
+            if no binding exists.
+        """
         return self._pid_bindings.get((vcs_id, vppb_id))
 
     def configure_pid_binding(

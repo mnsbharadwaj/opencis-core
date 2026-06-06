@@ -50,11 +50,30 @@ from opencis.util.logger import logger
 
 @dataclass
 class GetDrtRequestPayload:
+    """Request payload for Get DRT (Table 7-131).
+
+    Attributes:
+        drt_index: Index of the DRT table to read (0-based).
+        num_entries: Number of DRT entries to read.
+        start_entry: Starting DPID index within the DRT.
+    """
+
     drt_index: int = 0
     num_entries: int = 0
     start_entry: int = 0
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-131 wire format (6 bytes).
+
+        Wire layout (little-endian):
+            [0x00]       DRT Index (1 byte)
+            [0x01]       Reserved
+            [0x02..0x03] Number of Entries (uint16)
+            [0x04..0x05] Start Entry (uint16)
+
+        Returns:
+            A 6-byte ``bytes`` object.
+        """
         data = bytearray(6)
         data[0x00] = self.drt_index & 0xFF
         # 0x01 reserved
@@ -64,6 +83,17 @@ class GetDrtRequestPayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "GetDrtRequestPayload":
+        """Deserialize a 6-byte Table 7-131 wire payload.
+
+        Args:
+            data: Raw bytes (>= 6 bytes).
+
+        Returns:
+            A populated ``GetDrtRequestPayload``.
+
+        Raises:
+            ValueError: If ``data`` is shorter than 6 bytes.
+        """
         if len(data) < 6:
             raise ValueError("GetDrtRequestPayload: need 6 bytes")
         drt_index = data[0x00]
@@ -74,6 +104,16 @@ class GetDrtRequestPayload:
 
 @dataclass
 class GetDrtResponsePayload:
+    """Response payload for Get DRT (Table 7-132).
+
+    Attributes:
+        drt_index: Index of the DRT table that was read.
+        num_entries: Number of DRT entries actually returned.
+        start_entry: Starting DPID index of the returned entries.
+        associated_rgt_index: Index of the RGT associated with this DRT.
+        entries: List of DrtEntry objects read from the table.
+    """
+
     drt_index: int = 0
     num_entries: int = 0
     start_entry: int = 0
@@ -83,6 +123,20 @@ class GetDrtResponsePayload:
     HEADER_SIZE = 8  # bytes before the entry list
 
     def dump(self) -> bytes:
+        """Serialize to the Table 7-132 wire format.
+
+        Wire layout (little-endian):
+            [0x00]       DRT Index (1 byte)
+            [0x01]       Reserved
+            [0x02..0x03] Number of Entries (uint16)
+            [0x04..0x05] Start Entry (uint16)
+            [0x06]       Associated RGT Index (1 byte)
+            [0x07]       Reserved
+            [0x08..]     DRT Entry list (2 bytes each, Table 7-133)
+
+        Returns:
+            Variable-length ``bytes`` (8 + 2 × len(entries)).
+        """
         header = bytearray(self.HEADER_SIZE)
         header[0x00] = self.drt_index & 0xFF
         # 0x01 reserved
@@ -95,6 +149,18 @@ class GetDrtResponsePayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "GetDrtResponsePayload":
+        """Deserialize a Table 7-132 wire payload.
+
+        Args:
+            data: Raw bytes (>= 8-byte header + 2 × N entry bytes).
+
+        Returns:
+            A populated ``GetDrtResponsePayload``.
+
+        Raises:
+            ValueError: If the buffer is too short or the entry list
+                is truncated.
+        """
         if len(data) < cls.HEADER_SIZE:
             raise ValueError(f"GetDrtResponsePayload: need at least {cls.HEADER_SIZE} bytes")
         drt_index = data[0x00]
@@ -117,6 +183,14 @@ class GetDrtResponsePayload:
         )
 
     def get_pretty_print(self) -> str:
+        """Return a human-readable multiline summary of DRT entries.
+
+        Each entry is displayed with its DPID, entry type name, and
+        routing target value.
+
+        Returns:
+            A formatted string listing the DRT slice.
+        """
         lines = [
             f"- DRT Index:          {self.drt_index}",
             f"- Start Entry (DPID): {self.start_entry:#05x}",
@@ -142,10 +216,29 @@ class GetDrtCommand(CciForegroundCommand):
     OPCODE = CCI_FM_API_COMMAND_OPCODE.GET_DRT
 
     def __init__(self, pbr_switch_manager: PbrSwitchManager):
+        """Initialize the Get DRT command handler.
+
+        Args:
+            pbr_switch_manager: Manager that owns the DRT tables
+                in the PBR switch.
+        """
         super().__init__(self.OPCODE)
         self._pbr_switch_manager = pbr_switch_manager
 
     async def _execute(self, request: CciRequest) -> CciResponse:
+        """Execute the Get DRT command (Opcode 5708h).
+
+        Reads a slice of the specified DRT from PbrSwitchManager and
+        returns it, including the associated RGT index.
+
+        Args:
+            request: CCI request containing the serialized
+                GetDrtRequestPayload (6 bytes).
+
+        Returns:
+            A CciResponse whose payload contains the serialized
+            GetDrtResponsePayload, or INVALID_INPUT on error.
+        """
         try:
             req_payload = GetDrtRequestPayload.parse(request.payload)
         except ValueError as e:
@@ -176,6 +269,14 @@ class GetDrtCommand(CciForegroundCommand):
 
     @staticmethod
     def create_cci_request(request: GetDrtRequestPayload) -> CciRequest:
+        """Build a CCI request for Get DRT.
+
+        Args:
+            request: Populated request payload to serialize.
+
+        Returns:
+            A CciRequest with opcode 5708h and the serialized payload.
+        """
         req = CciRequest()
         req.opcode = GetDrtCommand.OPCODE
         req.payload = request.dump()
@@ -183,4 +284,12 @@ class GetDrtCommand(CciForegroundCommand):
 
     @staticmethod
     def parse_response_payload(data: bytes) -> GetDrtResponsePayload:
+        """Parse raw response bytes into a structured payload.
+
+        Args:
+            data: Raw response bytes.
+
+        Returns:
+            A populated ``GetDrtResponsePayload``.
+        """
         return GetDrtResponsePayload.parse(data)

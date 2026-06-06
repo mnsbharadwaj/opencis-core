@@ -36,6 +36,24 @@ class PbrSwitchRouter(RunnableComponent):
         hdm_decoder_manager: Optional[PbrHdmDecoderManager] = None,
         port_types: Optional[List[bool]] = None,  # True = USP, False/None = DSP
     ):
+        """Initialize the PBR switch data-plane router.
+
+        Sets up the per-port FIFO references and routing infrastructure.
+        No tasks are started until ``_run()`` is called.
+
+        Args:
+            switch_id: Numeric identifier for this switch (used in log messages).
+            pbr_switch_manager: The ``PbrSwitchManager`` that owns the DRT tables
+                and PID assignments used for DPID-based routing lookups.
+            port_fifos: List of ``FifoPair`` objects, one per switch port.
+                Index 0 is typically the USP; indices 1+ are DSPs.
+            hdm_decoder_manager: Optional ``PbrHdmDecoderManager`` for
+                HBR-to-PBR address-based encapsulation.  If ``None``, any
+                HBR packets that arrive will be dropped.
+            port_types: Per-port boolean flags where ``True`` marks a USP
+                and ``False`` (or ``None``) marks a DSP.  Defaults to all-DSP
+                if not provided.
+        """
         super().__init__()
         self._switch_id = switch_id
         self._pbr_switch_manager = pbr_switch_manager
@@ -48,6 +66,14 @@ class PbrSwitchRouter(RunnableComponent):
         self._is_running = False
 
     def _create_message(self, message):
+        """Format a log message with the switch-specific prefix.
+
+        Args:
+            message: The message body to format.
+
+        Returns:
+            A string prefixed with ``[PbrSwitchRouter:Switch{id}]``.
+        """
         return f"[PbrSwitchRouter:Switch{self._switch_id}] {message}"
 
     async def _process_port_ingress(self, ingress_port_id: int, fifo: "FifoPair"):
@@ -83,6 +109,25 @@ class PbrSwitchRouter(RunnableComponent):
         packet: BasePacket,
         egress_direction: str = "host_to_target",
     ):
+        """Route a single packet through the PBR switch.
+
+        Handles two packet categories:
+          1. **PBR packets** — already have a DPID in the PBR header.
+             The DRT is looked up to find the egress physical port, the
+             PBR header is stripped (decapsulation), and the inner payload
+             is forwarded to the egress FIFO.
+          2. **HBR packets** (CXL.mem / CXL.io) — have no DPID.  The
+             address is extracted and looked up via the HDM decoder to
+             obtain a DPID, then the packet is PBR-encapsulated and
+             re-routed through this same method (recursive call hits the
+             PBR branch).
+
+        Args:
+            ingress_port_id: Index of the port that received this packet.
+            packet: The raw packet read from the ingress FIFO.
+            egress_direction: Which half of the egress FifoPair to write to.
+                Either ``"host_to_target"`` or ``"target_to_host"``.
+        """
         base_packet = cast(BasePacket, packet)
         logger.debug(self._create_message(
             f"Checking packet type: is_pbr={base_packet.is_pbr()} "
@@ -187,6 +232,13 @@ class PbrSwitchRouter(RunnableComponent):
             await self._route_packet(ingress_port_id, pbr_packet, egress_direction)
 
     async def _run(self):
+        """Start per-port ingress listener tasks and await completion.
+
+        For each port, spawns an appropriate ingress listener based on
+        whether the port is a USP (host-facing) or DSP (device-facing).
+        Once all listeners are registered, transitions to RUNNING and
+        blocks until all tasks complete (i.e. until sentinels arrive).
+        """
         self._is_running = True
         for i, fifo in enumerate(self._port_fifos):
             is_usp = self._port_types[i] if i < len(self._port_types) else False
@@ -202,6 +254,12 @@ class PbrSwitchRouter(RunnableComponent):
         await self._routing_tasks.wait_for_completion()
 
     async def _stop(self):
+        """Stop all ingress listener tasks by injecting sentinels.
+
+        Sends ``None`` on both directions of every port's FIFO so that
+        both ``_process_port_ingress`` and ``_process_port_host_ingress``
+        break out of their infinite loops.
+        """
         for fifo in self._port_fifos:
             await fifo.host_to_target.put(None)
             await fifo.target_to_host.put(None)

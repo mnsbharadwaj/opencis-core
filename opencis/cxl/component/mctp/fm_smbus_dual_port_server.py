@@ -326,14 +326,28 @@ class FmSmbusDualPortServer(RunnableComponent):
         peer = writer.get_extra_info("peername", "unknown")
         logger.info(self._create_message(f"SMBus Master connected: {peer}"))
         self._master_connected = True
+
+        async def detect_disconnect(process_task):
+            try:
+                # StreamReader.read(1) will yield empty bytes when EOF is reached (disconnection)
+                await reader.read(1)
+            except Exception:
+                pass
+            finally:
+                process_task.cancel()
+
+        process_task = asyncio.create_task(self._process_master(writer))
+        disconnect_task = asyncio.create_task(detect_disconnect(process_task))
+
         try:
-            await self._process_master(writer)
+            await process_task
         except asyncio.CancelledError:
             print(f"  [master] _process_master CANCELLED (peer={peer})")
         except Exception as exc:
             print(f"  [master] _process_master ERROR: {exc}  (peer={peer})")
             logger.warning(self._create_message(f"SMBus Master {peer} error: {exc}"))
         finally:
+            disconnect_task.cancel()
             self._master_connected = False
             print(f"  [master] _process_master EXITED -- master_connected=False")
             try:

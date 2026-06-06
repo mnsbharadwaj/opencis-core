@@ -1,20 +1,104 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CXL 4.0 PBR Switch Configuration: 1 Host + 1 SLD + 1 GFD
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physical Topology:
+#
+#   ┌──────────┐         ┌──────────────────────────────────┐
+#   │   Host   │◄──TCP──►│ Port 0 (USP)  ←─ CxlSimpleHost  │
+#   │ (CPU/OS) │         │               ←─ GAE lives here  │
+#   └──────────┘         │                                  │
+#                        │       CXL PBR Switch             │
+#                        │       (Port 8000, TCP)           │
+#   ┌──────────┐         │                                  │
+#   │   SLD    │◄──TCP──►│ Port 1 (DSP)  ←─ Type-3 Memory  │
+#   │ (256 MB) │         │               ←─ vPPB 0 bound   │
+#   └──────────┘         │                                  │
+#                        │                                  │
+#   ┌──────────┐         │                                  │
+#   │   GFD    │◄──TCP──►│ Port 2 (DSP)  ←─ Generic Fabric │
+#   │ (CCI)    │         │               ←─ vPPB 1 bound   │
+#   └──────────┘         └──────────────────────────────────┘
+#
+# Commissioning order (FM CLI commands, see docs/gfd_fm_cli_commissioning.md):
+#   1. pbr:identify              → learn switch capabilities (numDrts, gaeSupportMap)
+#   2. pbr:configurePid          → assign PID 0x010 to port 2 (GFD)
+#   3. pbr:setDrt                → DRT[0][0x010] = PHYSICAL_PORT → port 2
+#   4. pbr:getPidBinding         → verify vPPB 1 is UNBOUND (pid=0xFFF)
+#   5. pbr:configurePidBinding   → bind vPPB 1 to PID 0x010
+#   6. pbr:getPidBinding         → confirm vPPB 1 is BOUND (pid=0x010)
+#
+# After commissioning, use GAE proxy commands:
+#   gae:proxyGfdMgmt   → send CCI to GFD via GAE (e.g. Identify, opcode=0x0001)
+#   gae:getProxyStatus  → poll for GFD response
+#   gae:cancelProxy     → abort if too slow
+#
+# How to run:
+#   Terminal 1 (switch):  opencis switch start configs/1vcs_1sld_1gfd.yaml
+#   Terminal 2 (FM):      opencis fm start --config-file configs/1vcs_1sld_1gfd.yaml
+#   Terminal 3 (host):    opencis host start-group configs/1vcs_1sld_1gfd.yaml
+#   Terminal 4 (devices): opencis sld-group start configs/1vcs_1sld_1gfd.yaml
+#   Terminal 5 (GFD):     opencis gfd-group start configs/1vcs_1sld_1gfd.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Switch Ports ──────────────────────────────────────────────────────────────
+# Each port entry maps to a physical port on the CXL switch.
+# Port 0 = USP (Upstream Port) — connects to the host CPU.
+# Port 1 = DSP (Downstream Port) — connects to SLD (Type-3 CXL memory device).
+# Port 2 = DSP (Downstream Port) — connects to GFD (Generic Fabric Device).
 port_configs:
-  - type: USP
-  - type: DSP
-  - type: DSP
+  - type: USP     # Port 0: Host-edge — GAE (Generic Access Endpoint) lives here
+  - type: DSP     # Port 1: SLD memory device (256 MB CXL.mem)
+  - type: DSP     # Port 2: GFD (CCI-only, no CXL.mem, no BAR)
+
+# ── Virtual CXL Switch (VCS) ─────────────────────────────────────────────────
+# One VCS with 2 vPPBs (virtual PCI-to-PCI Bridges):
+#   vPPB 0 → initially bound to port 1 (SLD)
+#   vPPB 1 → initially bound to port 2 (GFD)
+# The host sees each vPPB as a separate PCI function.
 virtual_switch_configs:
-  - upstream_port_index: 0
-    vppb_counts: 2
-    initial_bounds: [1,2]
+  - upstream_port_index: 0    # USP port index (must be a USP port)
+    vppb_counts: 2            # 2 vPPBs: one for SLD, one for GFD
+    initial_bounds: [1, 2]    # vPPB 0 → port 1 (SLD), vPPB 1 → port 2 (GFD)
+
+# ── HDM Decoder ───────────────────────────────────────────────────────────────
+# Host Device Memory decoder — maps host physical addresses to CXL devices.
+# decoder_count: 2 — one decoder per downstream device (SLD + GFD)
+# target_count: 2 — two targets (port 1 = SLD, port 2 = GFD)
+# Note: GFD has no CXL.mem, so the HDM decoder for port 2 maps only CXL.io.
 hdm_decoder_capabilities:
   decoder_count: 2
   target_count: 2
-  bi_capable: False
+  bi_capable: False           # No back-invalidation (simple topology)
+
+# ── Devices ───────────────────────────────────────────────────────────────────
 devices:
+
+  # -- SLD: Single Logical Device (Type-3 CXL Memory) -------------------------
+  # A 256 MB CXL.mem device on DSP port 1.
+  # The host can read/write this memory after PCI enumeration + CXL.mem attach.
+  # This device has: BAR-0 (MMIO registers), CXL.io, CXL.mem, HDM decoder.
   single_logical_devices:
-    - port_index: 1
-      memory_size: 256M
-      serial_number: 4E9FF1671694A385
+    - port_index: 1               # Must match a DSP port above
+      memory_size: 256M           # 256 MB of CXL-attached memory
+      serial_number: 4E9FF1671694A385   # Unique 64-bit serial (CXL spec §9.13.3)
+
+  # -- GFD: Generic Fabric Device (CCI-only) ----------------------------------
+  # A CXL 4.0 Generic Fabric Device on DSP port 2.
+  # NO memory, NO BAR registers, NO CXL.mem — CCI mailbox only.
+  # The host reaches this device via GAE proxy commands (opcode 0x5809).
+  # After PBR commissioning (Steps 1-6 above), the switch routes PID 0x010
+  # to port 2, enabling the GAE → GFD CCI path.
+  #
+  # What GFD supports:
+  #   - CCI Identify (opcode 0x0001) → returns component_type = 0x04 (GFD)
+  #   - No MMIO, no config space, no BAR-0
+  #
+  # What GAE does:
+  #   - GAE is NOT on the GFD — it is on the USP of the switch (port 0)
+  #   - GAE proxies CCI commands from the host to the GFD via DSP CCI tunnel
+  #   - Three GAE commands: ProxyGfdMgmt (0x5809), GetProxyStatus (0x580A),
+  #     CancelProxy (0x580B)
   generic_fabric_devices:
-    - port_index: 2
-      serial_number: 2200B90031B3ABD8
+    - port_index: 2               # Must match a DSP port above
+      serial_number: 2200B90031B3ABD8   # Unique 64-bit serial for GFD

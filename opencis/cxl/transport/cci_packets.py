@@ -232,6 +232,12 @@ class CciRequestPacket(
         if hasattr(self, "_fields"):
             self.init_cci_payload()
 
+    def get_cci_message(self) -> CciMessagePacket:
+        offset = self.get_byte_offset(self.cci_msg_header)
+        payload_data = bytes(self.payload) if self.payload is not None else self.get_data()
+        length = len(self.cci_msg_header) + len(payload_data)
+        return CciMessagePacket(self.get_bytes(offset, length))
+
     def get_command_opcode(self) -> int:
         return self.cci_msg_header.command_opcode
 
@@ -487,7 +493,7 @@ class CciResponsePacket(
 
     def get_cci_message(self) -> "CciMessagePacket":
         offset = self.get_byte_offset(self.cci_msg_header)
-        payload_data = bytes(self.payload)
+        payload_data = bytes(self.payload) if self.payload is not None else self.get_data()
         length = len(self.cci_msg_header) + len(payload_data)
         return CciMessagePacket(self.get_bytes(offset, length))
 

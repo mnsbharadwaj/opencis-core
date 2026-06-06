@@ -33,6 +33,7 @@ from opencis.apps.cxl_switch import CxlSwitch, CxlSwitchConfig
 from opencis.apps.cxl_simple_host import CxlSimpleHost
 from opencis.cxl.component.physical_port_manager import PortConfig, PORT_TYPE
 from opencis.cxl.component.virtual_switch_manager import VirtualSwitchConfig
+from oslash.either import Right, Left
 from opencis.cxl.cci.common import CCI_RETURN_CODE, CCI_GAE_COMMAND_OPCODE
 from opencis.cxl.transport.cci_packets import CciMessagePacket, CciPayloadPacket
 from opencis.cxl.transport.packet_constants import CCI_MCTP_MESSAGE_CATEGORY
@@ -73,7 +74,7 @@ def make_switch(switch_port: int, mctp_port: int) -> CxlSwitch:
     return CxlSwitch(
         switch_config=switch_config,
         device_configs=[],
-        start_mctp=False,  # no FM needed for host-direct test
+        start_mctp=True,  # Enable MCTP so MctpCciExecutor & GaeCciMailbox run
     )
 
 
@@ -188,11 +189,37 @@ async def test_gae_proxy_over_real_tcp():
     """
     SW_PORT = 18220
 
+    # Start a mock MCTP server to satisfy MctpConnectionClient's connection attempt
+    # and allow the switch to transition to the RUNNING state.
+    async def mock_mctp_server(reader, writer):
+        try:
+            while True:
+                data = await reader.read(1024)
+                if not data:
+                    break
+        except asyncio.CancelledError:
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    mctp_server = await asyncio.start_server(mock_mctp_server, "127.0.0.1", 18221)
+
     switch = make_switch(switch_port=SW_PORT, mctp_port=18221)
     host   = make_host(switch_port=SW_PORT)
     gfd    = make_gfd(switch_port=SW_PORT)
 
     result_holder = {}
+
+    def get_val(res):
+        if isinstance(res, Right):
+            return res._value.result["result"]
+        elif isinstance(res, Left):
+            raise RuntimeError(f"RPC Error: {res._error.message}")
+        return res
 
     async def _test_body():
         # Wait for everything to connect
@@ -209,7 +236,7 @@ async def test_gae_proxy_over_real_tcp():
         await asyncio.sleep(0.3)
 
         # Poll status
-        thread_id = result.value
+        thread_id = get_val(result)
         status_result = await host.gae_get_proxy_status(thread_id=thread_id, timeout=5.0)
         result_holder["status"] = status_result
 
@@ -231,21 +258,22 @@ async def test_gae_proxy_over_real_tcp():
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
+            mctp_server.close()
+            await mctp_server.wait_closed()
 
     await run()
 
     # Assertions
     assert "proxy" in result_holder, "gae_proxy_gfd_mgmt never returned"
     proxy = result_holder["proxy"]
-    assert not isinstance(proxy.value, str), f"Proxy failed: {proxy.value}"
-    thread_id = proxy.value
+    thread_id = get_val(proxy)
     assert isinstance(thread_id, int) and thread_id >= 1
 
     assert "status" in result_holder, "gae_get_proxy_status never returned"
     status = result_holder["status"]
-    assert not isinstance(status.value, str), f"Status failed: {status.value}"
-    assert status.value["completed"] is True
-    assert status.value["gfd_return_code"] == int(CCI_RETURN_CODE.SUCCESS)
+    status_val = get_val(status)
+    assert status_val["completed"] is True
+    assert status_val["gfd_return_code"] == int(CCI_RETURN_CODE.SUCCESS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

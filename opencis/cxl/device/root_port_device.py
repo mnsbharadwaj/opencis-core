@@ -436,8 +436,9 @@ class CxlRootPortDevice(RunnableComponent):
             rc_raw = inner.cci_msg_header.return_code
             resp_payload = inner.get_payload()
         elif isinstance(resp_packet, CciResponsePacket):
-            rc_raw = resp_packet.get_return_code() if hasattr(resp_packet, 'get_return_code') else 0
-            resp_payload = resp_packet.get_payload() if hasattr(resp_packet, 'get_payload') else b""
+            inner = resp_packet.get_cci_message()
+            rc_raw = inner.cci_msg_header.return_code
+            resp_payload = inner.get_payload()
         elif hasattr(resp_packet, "get_cci_message"):
             resp_msg = resp_packet.get_cci_message()
             rc_raw = resp_msg.cci_msg_header.return_code

@@ -117,8 +117,8 @@ class GaeCciMailbox(RunnableComponent):
                 elif isinstance(packet, CciRequestPacket):
                     # CciRequestPacket arrives over TCP after PacketReader decodes it
                     opcode  = packet.get_command_opcode()
-                    tag     = getattr(packet, "message_tag", 0)
-                    payload = packet.get_payload() if hasattr(packet, "get_payload") else b""
+                    tag     = packet.cci_msg_header.message_tag
+                    payload = packet.get_data()
                 elif hasattr(packet, "get_cci_message"):
                     cci_msg = packet.get_cci_message()
                     opcode  = cci_msg.cci_msg_header.command_opcode

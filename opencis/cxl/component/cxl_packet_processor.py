@@ -129,12 +129,12 @@ class CxlPacketProcessor(RunnableComponent):
             # carries CCI responses back to the host.
             usp_cci_incoming = (
                 self._cxl_connection.cci_fifo.host_to_target
-                if component_type == CXL_COMPONENT_TYPE.USP
+                if component_type in (CXL_COMPONENT_TYPE.USP, CXL_COMPONENT_TYPE.D2)
                 else None
             )
             usp_cci_outgoing = (
                 self._cxl_connection.cci_fifo.target_to_host
-                if component_type == CXL_COMPONENT_TYPE.USP
+                if component_type in (CXL_COMPONENT_TYPE.USP, CXL_COMPONENT_TYPE.D2)
                 else None
             )
             self._incoming = FifoGroup(
@@ -391,18 +391,37 @@ class CxlPacketProcessor(RunnableComponent):
                     await self._incoming.cxl_cache.put(cxl_cache_packet)
                 elif packet.is_cci():
                     if self._component_type == CXL_COMPONENT_TYPE.D2:
-                        logger.error(
-                            self._create_message("Got CCI packet on wrong device type - SLD")
-                        )
-                        raise Exception("Got CCI packet on wrong device type - SLD")
-                    if self._component_type == CXL_COMPONENT_TYPE.LD:
+                        # Allow D2 (e.g. GFD) to receive CCI if cci_fifo is configured
+                        if self._incoming.cci_fifo is not None:
+                            logger.debug(self._create_message(
+                                "Received Switch→GFD CCI packet — routing to cci_fifo"
+                            ))
+                            if hasattr(packet, "get_cci_message"):
+                                inner = packet.get_cci_message()
+                                await self._incoming.cci_fifo.put(inner)
+                            else:
+                                await self._incoming.cci_fifo.put(packet)
+                        else:
+                            logger.error(
+                                self._create_message("Got CCI packet on wrong device type - SLD")
+                            )
+                            raise Exception("Got CCI packet on wrong device type - SLD")
+                    elif self._component_type == CXL_COMPONENT_TYPE.LD:
                         if self._fmld.upstream_fifo is None:
                             logger.error(self._create_message("Got CCI packet on no CCI FIFO"))
                             raise Exception("Got CCI packet on no CCI FIFO")
                         cci_packet = cast(CciRequestPacket, packet)
                         await self._fmld.upstream_fifo.host_to_target.put(cci_packet)
                     elif self._component_type == CXL_COMPONENT_TYPE.DSP:
-                        await self._incoming.cci_fifo.put(packet)
+                        if self._incoming.cci_fifo is not None:
+                            logger.debug(self._create_message(
+                                "Received GFD→Switch CCI response — routing to cci_fifo"
+                            ))
+                            if hasattr(packet, "get_cci_message"):
+                                inner = packet.get_cci_message()
+                                await self._incoming.cci_fifo.put(inner)
+                            else:
+                                await self._incoming.cci_fifo.put(packet)
                     elif self._component_type == CXL_COMPONENT_TYPE.USP:
                         # Host-direct CCI to GAE: put request into USP cci_fifo
                         # so GaeCciMailbox can pick it up.
@@ -417,7 +436,7 @@ class CxlPacketProcessor(RunnableComponent):
                             # Over TCP the packet arrives as CciPayloadPacket.
                             # Unwrap to CciMessagePacket so GaeCciMailbox (and in-process
                             # tests) always see a plain CciMessagePacket on the Queue.
-                            if isinstance(packet, CciPayloadPacket):
+                            if hasattr(packet, "get_cci_message"):
                                 inner = packet.get_cci_message()
                                 await self._incoming.cci_fifo.put(inner)
                             else:
@@ -568,7 +587,14 @@ class CxlPacketProcessor(RunnableComponent):
                 packet = await self._outgoing.cci_fifo.get()
                 if self._is_disconnection_notification(packet):
                     break
-                self._writer.write(bytes(packet))
+                logger.debug(self._create_message(
+                    "Sending Switch→GFD CCI request packet to GFD"
+                ))
+                if isinstance(packet, CciMessagePacket) and not isinstance(packet, CciPayloadPacket):
+                    wire_packet = CciPayloadPacket.create(packet)
+                else:
+                    wire_packet = packet
+                self._writer.write(bytes(wire_packet))
                 await self._writer.drain()
             elif self._component_type == CXL_COMPONENT_TYPE.USP:
                 # GAE→Host CCI responses: read from cci_fifo.target_to_host
@@ -602,6 +628,21 @@ class CxlPacketProcessor(RunnableComponent):
                     break
                 logger.debug(self._create_message(
                     "Sending Host→GAE CCI request packet to switch"
+                ))
+                if isinstance(packet, CciMessagePacket) and not isinstance(packet, CciPayloadPacket):
+                    wire_packet = CciPayloadPacket.create(packet)
+                else:
+                    wire_packet = packet
+                self._writer.write(bytes(wire_packet))
+                await self._writer.drain()
+            elif self._component_type == CXL_COMPONENT_TYPE.D2:
+                if self._outgoing.cci_fifo is None:
+                    break
+                packet = await self._outgoing.cci_fifo.get()
+                if self._is_disconnection_notification(packet):
+                    break
+                logger.debug(self._create_message(
+                    "Sending GFD→Switch CCI response packet to switch"
                 ))
                 if isinstance(packet, CciMessagePacket) and not isinstance(packet, CciPayloadPacket):
                     wire_packet = CciPayloadPacket.create(packet)

@@ -2,7 +2,7 @@
 
 This guide provides an incremental, command-by-command approach to integrate and test CXL 4.0 Port-Based Routing (PBR) and Generic Access Endpoint (GAE) command sets in Python. 
 
-The values used in this guide correspond to the standard 1 Host + 1 SLD + 1 GFD topology configured in [`configs/1vcs_1sld_1gfd.yaml`](file:///c:/Users/pavan/Desktop/cxl/opencis-core/configs/1vcs_1sld_1gfd.yaml).
+The values used in this guide correspond to the standard 1 Host + 1 MLD + 1 GFD topology configured in [`configs/1vcs_1mld_1gfd.yaml`](file:///c:/Users/pavan/Desktop/cxl/opencis-core/configs/1vcs_1mld_1gfd.yaml).
 
 ---
 
@@ -13,10 +13,10 @@ To run the end-to-end demo successfully, we configure the switch with the follow
 | Component | Index / ID | Description |
 |---|---|---|
 | **USP Port** | `0` | Upstream Port connecting the Host to the Switch. The GAE lives here. |
-| **DSP Port 1** | `1` | Downstream Port connected to the Single Logical Device (SLD). |
+| **DSP Port 1** | `1` | Downstream Port connected to the Multi-Logical Device (MLD). |
 | **DSP Port 2** | `2` | Downstream Port connected to the Generic Fabric Device (GFD). |
 | **VCS ID** | `0` | Virtual CXL Switch ID. |
-| **vPPB 0** | `0` | Virtual PCI-to-PCI Bridge representing DSP Port 1 (SLD). |
+| **vPPB 0** | `0` | Virtual PCI-to-PCI Bridge representing DSP Port 1 (MLD). |
 | **vPPB 1** | `1` | Virtual PCI-to-PCI Bridge representing DSP Port 2 (GFD). |
 | **GFD PID** | `0x010` | 12-bit Port Identifier assigned to DSP Port 2 (GFD). |
 | **DRT Index** | `0` | DPID Routing Table index. |
@@ -612,7 +612,7 @@ if __name__ == "__main__":
 1. **Start the Fabric Manager Environment:**
    Run the Fabric Manager with a config defining your switch, GAE, and GFD topology:
    ```bash
-   python run_pbr_env.py --config-file configs/1vcs_1sld_1gfd.yaml
+   ./cxl-util start -c switch -c fm -c mld-group -c gfd-group --config-file configs/1vcs_1mld_1gfd.yaml
    ```
 
 2. **Execute the Commissioning client:**

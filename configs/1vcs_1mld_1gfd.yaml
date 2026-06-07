@@ -1,0 +1,89 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CXL 4.0 PBR Switch Configuration: 1 Host + 1 MLD + 1 GFD
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Physical Topology:
+#
+#   ┌──────────┐         ┌──────────────────────────────────┐
+#   │   Host   │◄──TCP──►│ Port 0 (USP)  ←─ CxlSimpleHost  │
+#   │ (CPU/OS) │         │               ←─ GAE lives here  │
+#   └──────────┘         │                                  │
+#                        │       CXL PBR Switch             │
+#                        │       (Port 8000, TCP)           │
+#   ┌──────────┐         │                                  │
+#   │   MLD    │◄──TCP──►│ Port 1 (DSP)  ←─ Multi-Logical   │
+#   │ (4 LDs)  │         │               ←─ vPPB 0 bound   │
+#   └──────────┘         │                                  │
+#                        │                                  │
+#   ┌──────────┐         │                                  │
+#   │   GFD    │◄──TCP──►│ Port 2 (DSP)  ←─ Generic Fabric │
+#   │ (CCI)    │         │               ←─ vPPB 1 bound   │
+#   └──────────┘         └──────────────────────────────────┘
+#
+# Commissioning order (FM CLI commands):
+#   1. pbr:identify              → learn switch capabilities
+#   2. pbr:configurePid          → assign PID 0x010 to port 2 (GFD)
+#   3. pbr:setDrt                → DRT[0][0x010] = PHYSICAL_PORT → port 2
+#   4. pbr:getPidBinding         → verify vPPB 1 is UNBOUND (pid=0xFFF)
+#   5. pbr:configurePidBinding   → bind vPPB 1 to PID 0x010
+#   6. pbr:getPidBinding         → confirm vPPB 1 is BOUND (pid=0x010)
+#
+# After commissioning, use GAE proxy commands:
+#   gae:proxyGfdMgmt   → send CCI to GFD via GAE (e.g. Identify, opcode=0x0001)
+#   gae:getProxyStatus  → poll for GFD response
+#
+# How to run:
+#   Terminal 1 (Switch, FM, MLD, GFD):
+#     ./cxl-util start -c switch -c fm -c mld-group -c gfd-group --config-file configs/1vcs_1mld_1gfd.yaml
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Switch Ports ──────────────────────────────────────────────────────────────
+# Port 0 = USP (Upstream Port) — connects to the host CPU.
+# Port 1 = DSP (Downstream Port) — connects to MLD (Multi-Logical Device).
+# Port 2 = DSP (Downstream Port) — connects to GFD (Generic Fabric Device).
+port_configs:
+  - type: USP     # Port 0: Host-edge — GAE (Generic Access Endpoint) lives here
+  - type: DSP     # Port 1: MLD memory device
+  - type: DSP     # Port 2: GFD (CCI-only, no CXL.mem, no BAR)
+
+# ── Virtual CXL Switch (VCS) ─────────────────────────────────────────────────
+# One VCS with 2 vPPBs (virtual PCI-to-PCI Bridges):
+#   vPPB 0 → initially bound to port 1 (MLD)
+#   vPPB 1 → initially bound to port 2 (GFD)
+virtual_switch_configs:
+  - upstream_port_index: 0    # USP port index
+    vppb_counts: 2            # 2 vPPBs: one for MLD, one for GFD
+    initial_bounds: [1, 2]    # vPPB 0 → port 1 (MLD), vPPB 1 → port 2 (GFD)
+
+# ── HDM Decoder ───────────────────────────────────────────────────────────────
+hdm_decoder_capabilities:
+  decoder_count: 2
+  target_count: 2
+  bi_capable: False
+
+# ── Devices ───────────────────────────────────────────────────────────────────
+devices:
+
+  # -- MLD: Multi-Logical Device (Type-3 CXL Memory Shared Pool) ---------------
+  # Instantiates 4 Logical Devices (LDs) sharing a 1G pool on DSP Port 1.
+  multi_logical_devices:
+    - port_index: 1
+      serial_number: 3FB95963144632BF
+      num_lds_supported: 4
+      total_capacity: 1G
+      logical_devices:
+        - memory_size: 256M
+          ld_id: 0
+        - memory_size: 256M
+          ld_id: 1
+        - memory_size: 256M
+          ld_id: 2
+        - memory_size: 256M
+          ld_id: 3
+
+  # -- GFD: Generic Fabric Device (CCI-only) ----------------------------------
+  # A CXL 4.0 Generic Fabric Device on DSP port 2.
+  generic_fabric_devices:
+    - port_index: 2
+      serial_number: 2200B90031B3ABD8

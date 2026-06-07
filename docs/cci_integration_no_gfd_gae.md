@@ -2,11 +2,28 @@
 
 This guide provides an incremental, command-by-command approach to integrate and test CXL 4.0 Port-Based Routing (PBR) and Generic Access Endpoint (GAE) command sets in Python. 
 
-By implementing and testing these commands one by one, you can ensure compatibility, field alignment, and transport layer correctness in your Python setup before moving on.
+The values used in this guide correspond to the standard 1 Host + 1 SLD + 1 GFD topology configured in [`configs/1vcs_1sld_1gfd.yaml`](file:///c:/Users/pavan/Desktop/cxl/opencis-core/configs/1vcs_1sld_1gfd.yaml).
 
 ---
 
-## 1. Prerequisites and Import Configuration
+## 1. Demo Topology Context
+
+To run the end-to-end demo successfully, we configure the switch with the following topology parameters:
+
+| Component | Index / ID | Description |
+|---|---|---|
+| **USP Port** | `0` | Upstream Port connecting the Host to the Switch. The GAE lives here. |
+| **DSP Port 1** | `1` | Downstream Port connected to the Single Logical Device (SLD). |
+| **DSP Port 2** | `2` | Downstream Port connected to the Generic Fabric Device (GFD). |
+| **VCS ID** | `0` | Virtual CXL Switch ID. |
+| **vPPB 0** | `0` | Virtual PCI-to-PCI Bridge representing DSP Port 1 (SLD). |
+| **vPPB 1** | `1` | Virtual PCI-to-PCI Bridge representing DSP Port 2 (GFD). |
+| **GFD PID** | `0x010` | 12-bit Port Identifier assigned to DSP Port 2 (GFD). |
+| **DRT Index** | `0` | DPID Routing Table index. |
+
+---
+
+## 2. Prerequisites and Import Configuration
 
 Ensure your Python environment has `opencis-core` installed. If you haven't done so, install the package in editable mode:
 ```bash
@@ -30,7 +47,7 @@ from opencis.cxl.transport.common import BasePacket
 
 ---
 
-## 2. Core Transport Round-Trip Client
+## 3. Core Transport Round-Trip Client
 
 For direct MCTP-over-TCP connection (default FM Port `8300`), use this helper function to handle connection, serialization, packet framing, write draining, and response parsing:
 
@@ -70,7 +87,7 @@ async def cci_round_trip(
 
 ---
 
-## 3. Incremental Command Integration Steps
+## 4. Incremental Command Integration Steps
 
 Follow these steps sequentially to test each command against the running Fabric Manager.
 
@@ -132,8 +149,8 @@ async def test_step2_identify_gae(reader, writer):
 
 ---
 
-### Step 3: Assign PID to Switch Port (`CONFIGURE_PID_ASSIGNMENT` — Opcode `0x5704`)
-Map a 12-bit Port Identifier (PID) to a physical port on the switch where the GFD device is attached.
+### Step 3: Assign PID to GFD Port (`CONFIGURE_PID_ASSIGNMENT` — Opcode `0x5704`)
+Map a 12-bit Port Identifier (PID) to physical Port 2 on the switch where the GFD device is attached.
 
 #### Implementation & Verification
 ```python
@@ -145,12 +162,12 @@ from opencis.cxl.cci.fabric_manager.pbr_switch.configure_pid_assignment import (
 )
 
 async def test_step3_configure_pid(reader, writer):
-    print("[Step 3] CONFIGURE_PID_ASSIGNMENT (0x5704) — PID 0x010 -> Port 1")
+    print("[Step 3] CONFIGURE_PID_ASSIGNMENT (0x5704) — PID 0x010 -> Port 2 (GFD)")
     
-    # Map PID 0x010 to physical Port 1
+    # Map PID 0x010 to physical Port 2 (where the GFD is attached)
     payload = ConfigurePidAssignmentRequestPayload(
         operation=PidAssignmentOperation.ASSIGN,
-        entries=[PidAssignmentEntry(pid=0x010, target_id=1, instance_id=0)]
+        entries=[PidAssignmentEntry(pid=0x010, target_id=2, instance_id=0)]
     )
     
     resp_msg = await cci_round_trip(
@@ -167,7 +184,7 @@ async def test_step3_configure_pid(reader, writer):
 ---
 
 ### Step 4: Query GAE Access Vectors (`GET_PID_ACCESS_VECTORS` — Opcode `0x5802`)
-Query valid target vectors (VTV) and Global Memory vectors (GMV) for the assigned PID `0x010`.
+Query valid target vectors (VTV) and Global Memory vectors (GMV) for the assigned GFD PID `0x010`.
 
 #### Implementation & Verification
 ```python
@@ -200,7 +217,7 @@ async def test_step4_get_vectors(reader, writer):
 ---
 
 ### Step 5: Program Switch Routing Table (`SET_DRT` — Opcode `0x5709`)
-Configure the Destination Routing Table (DRT). We map the programmed PID `0x010` index in DRT 0 to point to physical Port 1.
+Configure the Destination Routing Table (DRT). We map the programmed PID `0x010` index in DRT 0 to point to physical Port 2.
 
 #### Implementation & Verification
 ```python
@@ -211,12 +228,12 @@ from opencis.cxl.cci.fabric_manager.pbr_switch.set_drt import (
 from opencis.cxl.component.pbr_switch_manager import DrtEntry, DrtEntryType
 
 async def test_step5_set_drt(reader, writer):
-    print("[Step 5] SET_DRT (0x5709) — DRT[0x010] = Port 1")
+    print("[Step 5] SET_DRT (0x5709) — DRT[0x010] = Port 2")
     
     payload = SetDrtRequestPayload(
         drt_index=0,
         start_entry=0x010,
-        entries=[DrtEntry(entry_type=DrtEntryType.PHYSICAL_PORT, routing_target=1)]
+        entries=[DrtEntry(entry_type=DrtEntryType.PHYSICAL_PORT, routing_target=2)]
     )
     
     resp_msg = await cci_round_trip(
@@ -264,8 +281,41 @@ async def test_step6_get_drt(reader, writer):
 
 ---
 
-### Step 7: Bind Virtual Port to Endpoint (`CONFIGURE_PID_BINDING` — Opcode `0x5706`)
-Bind Virtual Port Bridge (vPPB) 0 on VCS 0 to PID `0x010`.
+### Step 7: Query Initial Binding (`GET_PID_BINDING` — Opcode `0x5705`)
+Query the binding of vPPB 1 (which represents GFD on Port 2) before setting it. Since we have not bound it yet, the response PID should be `0xFFF` (unbound).
+
+#### Implementation & Verification
+```python
+from opencis.cxl.cci.fabric_manager.pbr_switch.get_pid_binding import (
+    GetPidBindingCommand,
+    GetPidBindingRequestPayload,
+)
+
+async def test_step7_query_initial_binding(reader, writer):
+    print("[Step 7] GET_PID_BINDING (0x5705) - Pre-bind Check (vPPB 1)")
+    
+    # Query VCS 0, vPPB 1 (representing Port 2 / GFD)
+    payload = GetPidBindingRequestPayload(target_vcs=0, target_vppb=1)
+    
+    resp_msg = await cci_round_trip(
+        reader, writer,
+        opcode=CCI_FM_API_COMMAND_OPCODE.GET_PID_BINDING,
+        payload=payload.dump(),
+        tag=7
+    )
+    
+    rc = CCI_RETURN_CODE(resp_msg.cci_msg_header.return_code)
+    print(f"   Return Code: {rc.name}")
+    
+    if rc == CCI_RETURN_CODE.SUCCESS:
+        resp_payload = GetPidBindingCommand.parse_response_payload(resp_msg.get_payload())
+        print(f"   Bound PID: {resp_payload.pid:#05x} (Expected: 0xfff / UNBOUND)")
+```
+
+---
+
+### Step 8: Bind Virtual Port to GFD Endpoint (`CONFIGURE_PID_BINDING` — Opcode `0x5706`)
+Bind Virtual Port Bridge (vPPB) 1 on VCS 0 to GFD PID `0x010`.
 
 > [!NOTE]
 > `CONFIGURE_PID_BINDING` is a **Background Command**. 
@@ -279,13 +329,14 @@ from opencis.cxl.cci.fabric_manager.pbr_switch.configure_pid_binding import (
     PidBindingOperation,
 )
 
-async def test_step7_bind_vppb(reader, writer):
-    print("[Step 7] CONFIGURE_PID_BINDING (0x5706) — Bind vPPB 0 -> PID 0x010")
+async def test_step8_bind_vppb(reader, writer):
+    print("[Step 8] CONFIGURE_PID_BINDING (0x5706) — Bind vPPB 1 -> PID 0x010")
     
+    # Bind VCS 0, vPPB 1 to target PID 0x010
     payload = ConfigurePidBindingRequestPayload(
         operation=PidBindingOperation.BIND,
         target_vcs=0,
-        target_vppb=0,
+        target_vppb=1,
         pid=0x010
     )
     
@@ -293,7 +344,7 @@ async def test_step7_bind_vppb(reader, writer):
         reader, writer,
         opcode=CCI_FM_API_COMMAND_OPCODE.CONFIGURE_PID_BINDING,
         payload=payload.dump(),
-        tag=7
+        tag=8
     )
     
     rc = CCI_RETURN_CODE(resp_msg.cci_msg_header.return_code)
@@ -306,7 +357,7 @@ async def test_step7_bind_vppb(reader, writer):
 
 ---
 
-### Step 8: Tunnel CCI Command to GFD (`PROXY_GFD_MGMT_CMD` — Opcode `0x5809`)
+### Step 9: Tunnel CCI Command to GFD (`PROXY_GFD_MGMT_CMD` — Opcode `0x5809`)
 Issue a proxy command through the GAE USP down to the GFD device mailbox. We forward the GFD Identify command (`0x0001`).
 
 > [!NOTE]
@@ -320,8 +371,8 @@ from opencis.cxl.cci.fabric_manager.gae.proxy_gfd_mgmt import (
     ProxyGfdMgmtResponsePayload,
 )
 
-async def test_step8_proxy_gfd_command(reader, writer) -> int:
-    print("[Step 8] PROXY_GFD_MGMT_CMD (0x5809) — Forward GFD Identify Opcode 0x0001")
+async def test_step9_proxy_gfd_command(reader, writer) -> int:
+    print("[Step 9] PROXY_GFD_MGMT_CMD (0x5809) — Forward GFD Identify Opcode 0x0001")
     
     # GFD command: IDENTIFY_GFD (opcode 0x0001, payload empty)
     req = ProxyGfdMgmtCommand.create_cci_request(gfd_opcode=0x0001, gfd_payload=b"")
@@ -330,7 +381,7 @@ async def test_step8_proxy_gfd_command(reader, writer) -> int:
         reader, writer,
         opcode=req.opcode,
         payload=req.payload,
-        tag=8
+        tag=9
     )
     
     rc = CCI_RETURN_CODE(resp_msg.cci_msg_header.return_code)
@@ -347,8 +398,8 @@ async def test_step8_proxy_gfd_command(reader, writer) -> int:
 
 ---
 
-### Step 9: Query Tunnel Status (`GET_PROXY_THREAD_STATUS` — Opcode `0x580A`)
-Poll the thread status using the `thread_id` from Step 8. When `completed = True`, it contains the GFD's response payload.
+### Step 10: Query Tunnel Status (`GET_PROXY_THREAD_STATUS` — Opcode `0x580A`)
+Poll the thread status using the `thread_id` from Step 9. When `completed = True`, it contains the GFD's response payload.
 
 #### Implementation & Verification
 ```python
@@ -357,8 +408,8 @@ from opencis.cxl.cci.fabric_manager.gae.get_proxy_thread_status import (
     GetProxyThreadStatusResponsePayload,
 )
 
-async def test_step9_get_proxy_status(reader, writer, thread_id: int):
-    print(f"[Step 9] GET_PROXY_THREAD_STATUS (0x580A) — Thread ID {thread_id}")
+async def test_step10_get_proxy_status(reader, writer, thread_id: int):
+    print(f"[Step 10] GET_PROXY_THREAD_STATUS (0x580A) — Thread ID {thread_id}")
     if thread_id == 0:
         print("   Skipping (invalid thread ID).")
         return
@@ -369,7 +420,7 @@ async def test_step9_get_proxy_status(reader, writer, thread_id: int):
         reader, writer,
         opcode=req.opcode,
         payload=req.payload,
-        tag=9
+        tag=10
     )
     
     rc = CCI_RETURN_CODE(resp_msg.cci_msg_header.return_code)
@@ -379,31 +430,32 @@ async def test_step9_get_proxy_status(reader, writer, thread_id: int):
         payload = GetProxyThreadStatusCommand.parse_response_payload(resp_msg.get_payload())
         print(payload.get_pretty_print())
         if payload.completed:
+            # GFD Identify Response Payload contains the GFD properties:
+            # - component_type (offset 0): 0x04 (IdentifyComponentType.GFD)
+            # - serial_number (offset 16): 64-bit serial
             print(f"   GFD Response Payload: {payload.gfd_response_payload.hex()}")
+            if len(payload.gfd_response_payload) > 0:
+                comp_type = payload.gfd_response_payload[0]
+                print(f"   GFD Component Type: {comp_type:#04x} (Expected: 0x04 / GFD)")
 ```
 
 ---
 
-### Step 10: Verify Binding (`GET_PID_BINDING` — Opcode `0x5705`)
-Query the binding of VCS 0, vPPB 0 again. It should now report that it is bound to PID `0x010`.
+### Step 11: Verify Final Binding (`GET_PID_BINDING` — Opcode `0x5705`)
+Query the binding of VCS 0, vPPB 1 again. It should now report that it is bound to PID `0x010`.
 
 #### Implementation & Verification
 ```python
-from opencis.cxl.cci.fabric_manager.pbr_switch.get_pid_binding import (
-    GetPidBindingCommand,
-    GetPidBindingRequestPayload,
-)
-
-async def test_step10_verify_binding(reader, writer):
-    print("[Step 10] GET_PID_BINDING (0x5705) - Post-bind Verification")
+async def test_step11_verify_binding(reader, writer):
+    print("[Step 11] GET_PID_BINDING (0x5705) - Post-bind Verification (vPPB 1)")
     
-    payload = GetPidBindingRequestPayload(target_vcs=0, target_vppb=0)
+    payload = GetPidBindingRequestPayload(target_vcs=0, target_vppb=1)
     
     resp_msg = await cci_round_trip(
         reader, writer,
         opcode=CCI_FM_API_COMMAND_OPCODE.GET_PID_BINDING,
         payload=payload.dump(),
-        tag=10
+        tag=11
     )
     
     rc = CCI_RETURN_CODE(resp_msg.cci_msg_header.return_code)
@@ -420,9 +472,9 @@ async def test_step10_verify_binding(reader, writer):
 
 ---
 
-## 4. Standalone Combined Test Harness
+## 5. Standalone Combined Test Harness
 
-Save the following code as `test_pbr_commissioning.py`. Running it will connect to a running Fabric Manager instance on port `8300` and execute all 10 steps sequentially.
+Save the following code as `test_pbr_commissioning.py`. Running it will connect to a running Fabric Manager instance on port `8300` and execute all 11 steps sequentially.
 
 ```python
 """
@@ -528,23 +580,26 @@ async def main():
     await test_step6_get_drt(reader, writer)
     await asyncio.sleep(0.01)
 
-    await test_step7_bind_vppb(reader, writer)
+    await test_step7_query_initial_binding(reader, writer)
     await asyncio.sleep(0.01)
 
-    thread_id = await test_step8_proxy_gfd_command(reader, writer)
+    await test_step8_bind_vppb(reader, writer)
+    await asyncio.sleep(0.01)
+
+    thread_id = await test_step9_proxy_gfd_command(reader, writer)
     # Wait for GFD transaction to complete
     await asyncio.sleep(0.2)
 
-    await test_step9_get_proxy_status(reader, writer, thread_id)
+    await test_step10_get_proxy_status(reader, writer, thread_id)
     await asyncio.sleep(0.01)
 
-    await test_step10_verify_binding(reader, writer)
+    await test_step11_verify_binding(reader, writer)
 
     print("\nClosing connection.")
     writer.close()
     await writer.wait_closed()
 
-# [Paste Step 1 to Step 10 functions here]
+# [Paste Step 1 to Step 11 functions here]
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -552,12 +607,12 @@ if __name__ == "__main__":
 
 ---
 
-## 5. Execution and Server Verification
+## 6. Execution and Server Verification
 
 1. **Start the Fabric Manager Environment:**
    Run the Fabric Manager with a config defining your switch, GAE, and GFD topology:
    ```bash
-   python run_pbr_env.py --config-file configs/1vcs_1mld.yaml
+   python run_pbr_env.py --config-file configs/1vcs_1sld_1gfd.yaml
    ```
 
 2. **Execute the Commissioning client:**
@@ -567,4 +622,7 @@ if __name__ == "__main__":
    ```
 
 3. **Verify Output logs:**
-   On the test client terminal, you should see SUCCESS for all 10 steps.
+   On the test client terminal, you should see SUCCESS for all 11 steps.
+   * `Bound PID: 0xfff` in Step 7.
+   * `GFD Component Type: 0x04` in Step 10.
+   * `Bound PID: 0x010` in Step 11.

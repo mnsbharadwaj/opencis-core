@@ -122,6 +122,27 @@ typedef struct __attribute__((packed)) {
     uint16_t pid;
 } pbr_cfg_bind_req_t;
 
+/* GetPidAccessVectors */
+typedef struct __attribute__((packed)) {
+    uint16_t pid;
+} gae_get_vectors_req_t;
+
+/* ProxyGfdMgmt (Base Header) */
+typedef struct __attribute__((packed)) {
+    uint16_t gfd_opcode;
+    uint16_t gfd_payload_len;
+} gae_proxy_mgmt_req_t;
+
+/* GetProxyThreadStatus */
+typedef struct __attribute__((packed)) {
+    uint16_t thread_id;
+} gae_get_status_req_t;
+
+/* CancelProxyThread */
+typedef struct __attribute__((packed)) {
+    uint16_t thread_id;
+} gae_cancel_req_t;
+
 /* ── Main CCI command sequence ──────────────────────────────────────── */
 static int run_cci_sequence(int fd)
 {
@@ -190,7 +211,26 @@ static int run_cci_sequence(int fd)
 
     /* 9. GET_PID_ACCESS_VECTORS */
     printf(BOLD "── Cmd 9: GET_PID_ACCESS_VECTORS ──\n" RESET);
-    SEND(OPCODE_GET_PID_ACCESS_VECTORS, NULL, 0);
+    gae_get_vectors_req_t get_vec = { .pid = 0x010 };
+    SEND(OPCODE_GET_PID_ACCESS_VECTORS, &get_vec, sizeof(get_vec));
+
+    /* 10. PROXY_GFD_MGMT — proxy GFD Identify (0x0001) */
+    printf(BOLD "── Cmd 10: PROXY_GFD_MGMT ──\n" RESET);
+    gae_proxy_mgmt_req_t proxy_req = {
+        .gfd_opcode = 0x0001,      /* Identify GFD */
+        .gfd_payload_len = 0,
+    };
+    SEND(OPCODE_PROXY_GFD_MGMT, &proxy_req, sizeof(proxy_req));
+
+    /* 11. GET_PROXY_THREAD_STATUS — query Thread ID 1 */
+    printf(BOLD "── Cmd 11: GET_PROXY_THREAD_STATUS ──\n" RESET);
+    gae_get_status_req_t status_req = { .thread_id = 1 };
+    SEND(OPCODE_GET_PROXY_THREAD_STATUS, &status_req, sizeof(status_req));
+
+    /* 12. CANCEL_PROXY_THREAD — cancel Thread ID 1 */
+    printf(BOLD "── Cmd 12: CANCEL_PROXY_THREAD ──\n" RESET);
+    gae_cancel_req_t cancel_req = { .thread_id = 1 };
+    SEND(OPCODE_CANCEL_PROXY_THREAD, &cancel_req, sizeof(cancel_req));
 
 #undef SEND
 

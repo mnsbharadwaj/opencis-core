@@ -15,22 +15,70 @@ class MLDClient:
         self._host = host
         self._port = port
         self._sio_client = socketio.AsyncClient()
-        self._connected = False
+
+        # Track response futures by port_index to support concurrency safely
+        self._create_ld_futures = {}
+        self._deallocate_ld_futures = {}
+        self._device_info_futures = {}
+        self._capacity_info_futures = {}
+        self._sync_state_futures = {}
+
+        self._register_handlers()
+
+    def _register_handlers(self):
+        @self._sio_client.on("create_logical_devices_response")
+        def handle_create_response(data):
+            port_index = data.get("port_index")
+            if port_index is not None:
+                future = self._create_ld_futures.get(port_index)
+                if future and not future.done():
+                    future.set_result(data)
+
+        @self._sio_client.on("deallocate_logical_devices_response")
+        def handle_deallocate_response(data):
+            port_index = data.get("port_index")
+            if port_index is not None:
+                future = self._deallocate_ld_futures.get(port_index)
+                if future and not future.done():
+                    future.set_result(data)
+
+        @self._sio_client.on("get_device_info_response")
+        def handle_device_info_response(data):
+            port_index = data.get("port_index")
+            if port_index is not None:
+                future = self._device_info_futures.get(port_index)
+                if future and not future.done():
+                    future.set_result(data)
+
+        @self._sio_client.on("get_capacity_info_response")
+        def handle_capacity_info_response(data):
+            port_index = data.get("port_index")
+            if port_index is not None:
+                future = self._capacity_info_futures.get(port_index)
+                if future and not future.done():
+                    future.set_result(data)
+
+        @self._sio_client.on("sync_with_switch_state_response")
+        def handle_sync_response(data):
+            port_index = data.get("port_index")
+            if port_index is not None:
+                future = self._sync_state_futures.get(port_index)
+                if future and not future.done():
+                    future.set_result(data)
 
     def is_connected(self) -> bool:
         """Check if the client is connected to the MLD socket server."""
-        return self._connected
+        return self._sio_client.connected
 
     async def connect(self):
         """Connect to the MLD socket server."""
         try:
             # Check if already connected
-            if self._connected:
+            if self._sio_client.connected:
                 logger.info(f"Already connected to MLD socket server at {self._host}:{self._port}")
                 return
 
             await self._sio_client.connect(f"http://{self._host}:{self._port}")
-            self._connected = True
             logger.info(f"Connected to MLD socket server at {self._host}:{self._port}")
         except Exception as e:
             logger.error(f"Failed to connect to MLD socket server: {e}")
@@ -38,9 +86,8 @@ class MLDClient:
 
     async def disconnect(self):
         """Disconnect from the MLD socket server."""
-        if self._connected:
+        if self._sio_client.connected:
             await self._sio_client.disconnect()
-            self._connected = False
             logger.info("Disconnected from MLD socket server")
 
     async def create_logical_devices(
@@ -63,7 +110,7 @@ class MLDClient:
         Returns:
             True if successful, False otherwise
         """
-        if not self._connected:
+        if not self.is_connected():
             logger.error("Not connected to MLD socket server")
             return False
 
@@ -81,18 +128,13 @@ class MLDClient:
 
             # Create a future to wait for the response
             response_future = asyncio.Future()
+            self._create_ld_futures[port_index] = response_future
 
-            # Set up a one-time event handler for the response
-            @self._sio_client.on("create_logical_devices_response")
-            def handle_response(data):
-                if not response_future.done():
-                    response_future.set_result(data)
-
-            # Send the command
-            await self._sio_client.emit("create_logical_devices", command_data)
-
-            # Wait for response with timeout
             try:
+                # Send the command
+                await self._sio_client.emit("create_logical_devices", command_data)
+
+                # Wait for response with timeout
                 response = await asyncio.wait_for(response_future, timeout=10.0)
                 logger.info(f"Received response from MLD process: {response}")
 
@@ -109,6 +151,8 @@ class MLDClient:
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for response from MLD process")
                 return False
+            finally:
+                self._create_ld_futures.pop(port_index, None)
 
         except Exception as e:
             logger.error(f"Error communicating with MLD process: {e}")
@@ -124,7 +168,7 @@ class MLDClient:
         Returns:
             True if successful, False otherwise
         """
-        if not self._connected:
+        if not self.is_connected():
             logger.error("Not connected to MLD socket server")
             return False
 
@@ -138,18 +182,13 @@ class MLDClient:
 
             # Create a future to wait for the response
             response_future = asyncio.Future()
+            self._deallocate_ld_futures[port_index] = response_future
 
-            # Set up a one-time event handler for the response
-            @self._sio_client.on("deallocate_logical_devices_response")
-            def handle_response(data):
-                if not response_future.done():
-                    response_future.set_result(data)
-
-            # Send the command
-            await self._sio_client.emit("deallocate_logical_devices", command_data)
-
-            # Wait for response with timeout
             try:
+                # Send the command
+                await self._sio_client.emit("deallocate_logical_devices", command_data)
+
+                # Wait for response with timeout
                 response = await asyncio.wait_for(response_future, timeout=10.0)
                 logger.info(f"Received deallocation response from MLD process: {response}")
 
@@ -167,6 +206,8 @@ class MLDClient:
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for deallocation response from MLD process")
                 return False
+            finally:
+                self._deallocate_ld_futures.pop(port_index, None)
 
         except Exception as e:
             logger.error(f"Error communicating with MLD process for deallocation: {e}")
@@ -174,7 +215,7 @@ class MLDClient:
 
     async def get_device_info(self, port_index: int) -> Optional[List[dict]]:
         """Get device information from the MLD process."""
-        if not self._connected:
+        if not self.is_connected():
             logger.error("Not connected to MLD socket server")
             return None
 
@@ -188,18 +229,13 @@ class MLDClient:
 
             # Create a future to wait for the response
             response_future = asyncio.Future()
+            self._device_info_futures[port_index] = response_future
 
-            # Set up a one-time event handler for the response
-            @self._sio_client.on("get_device_info_response")
-            def handle_response(data):
-                if not response_future.done():
-                    response_future.set_result(data)
-
-            # Send the command
-            await self._sio_client.emit("get_device_info", command_data)
-
-            # Wait for response with timeout
             try:
+                # Send the command
+                await self._sio_client.emit("get_device_info", command_data)
+
+                # Wait for response with timeout
                 response = await asyncio.wait_for(response_future, timeout=10.0)
                 logger.info(f"Received device info response from MLD process: {response}")
 
@@ -215,6 +251,8 @@ class MLDClient:
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for device info response from MLD process")
                 return None
+            finally:
+                self._device_info_futures.pop(port_index, None)
 
         except Exception as e:
             logger.error(f"Error communicating with MLD process for device info: {e}")
@@ -229,7 +267,7 @@ class MLDClient:
         Returns:
             Dictionary with capacity information or None if failed
         """
-        if not self._connected:
+        if not self.is_connected():
             logger.error("Not connected to MLD socket server")
             return None
 
@@ -241,18 +279,13 @@ class MLDClient:
 
             # Create a future to wait for the response
             response_future = asyncio.Future()
+            self._capacity_info_futures[port_index] = response_future
 
-            # Set up a one-time event handler for the response
-            @self._sio_client.on("get_capacity_info_response")
-            def handle_response(data):
-                if not response_future.done():
-                    response_future.set_result(data)
-
-            # Send the command
-            await self._sio_client.emit("get_capacity_info", command_data)
-
-            # Wait for response with timeout
             try:
+                # Send the command
+                await self._sio_client.emit("get_capacity_info", command_data)
+
+                # Wait for response with timeout
                 response = await asyncio.wait_for(response_future, timeout=10.0)
                 logger.info(f"Received capacity info response from MLD process: {response}")
 
@@ -265,6 +298,8 @@ class MLDClient:
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for capacity info response")
                 return None
+            finally:
+                self._capacity_info_futures.pop(port_index, None)
 
         except Exception as e:
             logger.error(f"Error getting capacity info: {e}")
@@ -283,7 +318,7 @@ class MLDClient:
         Returns:
             True if successful, False otherwise
         """
-        if not self._connected:
+        if not self.is_connected():
             logger.error("Not connected to MLD socket server")
             return False
 
@@ -299,18 +334,13 @@ class MLDClient:
 
             # Create a future to wait for the response
             response_future = asyncio.Future()
+            self._sync_state_futures[port_index] = response_future
 
-            # Set up a one-time event handler for the response
-            @self._sio_client.on("sync_with_switch_state_response")
-            def handle_response(data):
-                if not response_future.done():
-                    response_future.set_result(data)
-
-            # Send the command
-            await self._sio_client.emit("sync_with_switch_state", command_data)
-
-            # Wait for response with timeout
             try:
+                # Send the command
+                await self._sio_client.emit("sync_with_switch_state", command_data)
+
+                # Wait for response with timeout
                 response = await asyncio.wait_for(response_future, timeout=10.0)
                 logger.info(f"Received sync response from MLD process: {response}")
 
@@ -326,6 +356,8 @@ class MLDClient:
             except asyncio.TimeoutError:
                 logger.error("Timeout waiting for sync response")
                 return False
+            finally:
+                self._sync_state_futures.pop(port_index, None)
 
         except Exception as e:
             logger.error(f"Error syncing with switch state: {e}")

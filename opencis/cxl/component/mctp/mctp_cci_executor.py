@@ -250,26 +250,48 @@ class MctpCciExecutor(RunnableComponent):
     async def _process_outcoming_responses(self, downstream_connection: CxlConnection):
         logger.debug(self._create_message("Started processing outcoming request"))
         while True:
-            # Wait for incoming packets from the MCTP connection
-            packet = await downstream_connection.cci_fifo.target_to_host.get()
-            if packet is None:
-                logger.debug(self._create_message("Stopped processing outcoming request"))
-                break
+            try:
+                # Wait for incoming packets from the MCTP connection
+                packet = await downstream_connection.cci_fifo.target_to_host.get()
+                if packet is None:
+                    logger.debug(self._create_message("Stopped processing outcoming request"))
+                    break
 
-            # set LD table
-            opcode = packet.get_command_opcode()
-            if opcode == CCI_FM_API_COMMAND_OPCODE.SET_LD_ALLOCATIONS:
-                logger.info(self._create_message("switch received SetLdAllocationsResponsePacket"))
-                port_index = self._message_tag_list.get(packet.cci_msg_header.message_tag, None)
-                if port_index is None:
-                    raise ValueError("Invalid message tag")
+                # Ignore sideband / non-CCI packets
+                if hasattr(packet, "is_sideband") and packet.is_sideband():
+                    logger.debug(self._create_message("Ignoring sideband packet in outcoming responses"))
+                    continue
 
-            self._message_tag_list.pop(packet.cci_msg_header.message_tag)
+                if not hasattr(packet, "cci_msg_header") and not hasattr(packet, "get_command_opcode"):
+                    logger.debug(self._create_message("Ignoring non-CCI packet in outcoming responses"))
+                    continue
 
-            cci_packet = packet.get_cci_message()
-            cci_packet_tmc = CciPayloadPacket.create(cci_packet)
+                # set LD table
+                if hasattr(packet, "get_command_opcode"):
+                    opcode = packet.get_command_opcode()
+                else:
+                    opcode = packet.cci_msg_header.command_opcode
 
-            await self._mctp_connection.ep_to_controller.put(cci_packet_tmc)
+                if opcode == CCI_FM_API_COMMAND_OPCODE.SET_LD_ALLOCATIONS:
+                    logger.info(self._create_message("switch received SetLdAllocationsResponsePacket"))
+                    tag = packet.cci_msg_header.message_tag
+                    port_index = self._message_tag_list.get(tag, None)
+                    if port_index is None:
+                        logger.warning(self._create_message(f"Invalid message tag {tag} in SET_LD_ALLOCATIONS"))
+                        continue
+
+                tag = packet.cci_msg_header.message_tag
+                self._message_tag_list.pop(tag, None)
+
+                if hasattr(packet, "get_cci_message"):
+                    cci_packet = packet.get_cci_message()
+                else:
+                    cci_packet = packet
+                cci_packet_tmc = CciPayloadPacket.create(cci_packet)
+
+                await self._mctp_connection.ep_to_controller.put(cci_packet_tmc)
+            except Exception as e:
+                logger.error(self._create_message(f"Error in processing outcoming response: {e}"))
 
     async def _run(self):
         # Start all DSP CCI tunnel drain tasks

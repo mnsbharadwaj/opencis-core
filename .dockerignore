@@ -1,0 +1,13 @@
+.git
+.generated
+opencis/cxl/transport/.generated
+opencis/cxl/transport/packet_structs.pyx
+opencis/cxl/transport/packet_structs.pyi
+__pycache__
+*.so
+*.pyd
+*.pyc
+*.pyo
+build/
+.pytest_cache/
+.coverage

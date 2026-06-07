@@ -41,6 +41,24 @@ def start(use_test_runner, config_file):
             logger.error("Error while stopping CXL FabricManager", exc_info=stop_e)
 
 
+@fabric_manager_group.command(name="get-port")
+def get_port():
+    """Get physical port states."""
+    asyncio.run(socketio_client.get_port())
+
+
+@fabric_manager_group.command(name="get-vcs")
+def get_vcs():
+    """Get virtual CXL switch info."""
+    asyncio.run(socketio_client.get_vcs())
+
+
+@fabric_manager_group.command(name="get-device")
+def get_device():
+    """Get connected devices."""
+    asyncio.run(socketio_client.get_device())
+
+
 @fabric_manager_group.command(name="bind")
 @click.argument("vcs", nargs=1, type=BASED_INT)
 @click.argument("vppb", nargs=1, type=BASED_INT)
@@ -112,6 +130,137 @@ def set_ld_allocation(
 def background_status():
     """Check the status of background commands."""
     asyncio.run(socketio_client.get_background_status())
+
+
+@fabric_manager_group.command(name="pbr-identify")
+def pbr_identify():
+    """Identify PBR Switch (Opcode 5700h)."""
+    asyncio.run(socketio_client.pbr_identify())
+
+
+@fabric_manager_group.command(name="pbr-configure-pid")
+@click.option("--operation", type=click.Choice(["assign", "clear"]), default="assign")
+@click.option("--instance-id", type=BASED_INT, default=0)
+@click.argument("pid", type=BASED_INT)
+@click.argument("target_id", type=BASED_INT, default=0)
+def pbr_configure_pid(operation, instance_id, pid, target_id):
+    """Configure PID Assignment (Opcode 5704h)."""
+    op_val = 0 if operation == "assign" else 1
+    entries = [{"pid": pid, "targetId": target_id, "instanceId": instance_id}]
+    asyncio.run(socketio_client.pbr_configure_pid(op_val, entries))
+
+
+@fabric_manager_group.command(name="pbr-get-pid-binding")
+@click.argument("vcs", type=BASED_INT)
+@click.argument("vppb", type=BASED_INT)
+def pbr_get_pid_binding(vcs, vppb):
+    """Get PID Binding (Opcode 5705h)."""
+    asyncio.run(socketio_client.pbr_get_pid_binding(vcs, vppb))
+
+
+@fabric_manager_group.command(name="pbr-configure-pid-binding")
+@click.option("--operation", type=click.Choice(["bind", "unbind"]), default="bind")
+@click.option("--latency-base", type=BASED_INT, default=0)
+@click.option("--latency", type=BASED_INT, default=0)
+@click.option("--bw-base", type=BASED_INT, default=0)
+@click.option("--bw", type=BASED_INT, default=0)
+@click.argument("vcs", type=BASED_INT)
+@click.argument("vppb", type=BASED_INT)
+@click.argument("pid", type=BASED_INT)
+def pbr_configure_pid_binding(operation, latency_base, latency, bw_base, bw, vcs, vppb, pid):
+    """Configure PID Binding (Opcode 5706h)."""
+    op_val = 0 if operation == "bind" else 1
+    asyncio.run(
+        socketio_client.pbr_configure_pid_binding(
+            operation=op_val,
+            target_vcs=vcs,
+            target_vppb=vppb,
+            pid=pid,
+            latency_entry_base_unit=latency_base,
+            latency_entry=latency,
+            bw_entry_base_unit=bw_base,
+            bw_entry=bw,
+        )
+    )
+
+
+@fabric_manager_group.command(name="pbr-get-drt")
+@click.argument("drt_index", type=BASED_INT)
+@click.argument("start_entry", type=BASED_INT)
+@click.argument("num_entries", type=BASED_INT)
+def pbr_get_drt(drt_index, start_entry, num_entries):
+    """Get DRT Table Entries (Opcode 5708h)."""
+    asyncio.run(socketio_client.pbr_get_drt(drt_index, start_entry, num_entries))
+
+
+@fabric_manager_group.command(name="pbr-set-drt")
+@click.option("--entry-type", type=click.Choice(["physical", "rgt", "invalid"]), default="physical")
+@click.option("--routing-target", type=BASED_INT, default=0)
+@click.argument("drt_index", type=BASED_INT)
+@click.argument("start_entry", type=BASED_INT)
+def pbr_set_drt(entry_type, routing_target, drt_index, start_entry):
+    """Set DRT Table Entry (Opcode 5709h)."""
+    type_map = {
+        "physical": "PHYSICAL_PORT",
+        "rgt": "RGT_INDEX",
+        "invalid": "INVALID",
+    }
+    entries = [{"entryType": type_map[entry_type], "routingTarget": routing_target}]
+    asyncio.run(socketio_client.pbr_set_drt(drt_index, start_entry, entries))
+
+
+@fabric_manager_group.command(name="gae-identify")
+def gae_identify():
+    """Identify GAE (Opcode 5800h)."""
+    asyncio.run(socketio_client.gae_identify())
+
+
+@fabric_manager_group.command(name="gae-get-pid-access-vectors")
+@click.argument("pid", type=BASED_INT)
+def gae_get_pid_access_vectors(pid):
+    """Get PID Access Vectors (Opcode 5802h)."""
+    asyncio.run(socketio_client.gae_get_pid_access_vectors(pid))
+
+
+@fabric_manager_group.command(name="gae-proxy-gfd-mgmt")
+@click.option("--payload", help="Comma-separated byte values, e.g. '0x01,0x02'")
+@click.argument("gfd_opcode", type=BASED_INT)
+def gae_proxy_gfd_mgmt(payload, gfd_opcode):
+    """Proxy GFD Management (Opcode 5809h)."""
+    gfd_payload = []
+    if payload:
+        gfd_payload = [int(x.strip(), 0) for x in payload.split(",")]
+    asyncio.run(socketio_client.gae_proxy_gfd_mgmt(gfd_opcode, gfd_payload))
+
+
+@fabric_manager_group.command(name="gae-get-proxy-status")
+@click.argument("thread_id", type=BASED_INT)
+def gae_get_proxy_status(thread_id):
+    """Get Proxy Thread Status (Opcode 580Ah)."""
+    asyncio.run(socketio_client.gae_get_proxy_status(thread_id))
+
+
+@fabric_manager_group.command(name="gae-cancel-proxy")
+@click.argument("thread_id", type=BASED_INT)
+def gae_cancel_proxy(thread_id):
+    """Cancel Proxy Thread (Opcode 580Bh)."""
+    asyncio.run(socketio_client.gae_cancel_proxy(thread_id))
+
+
+@fabric_manager_group.command(name="gae-fabric-crawl-out")
+@click.option("--payload", help="Comma-separated byte values, e.g. '0x01,0x02'")
+@click.argument("target_port", type=BASED_INT)
+@click.argument("gfd_opcode", type=BASED_INT)
+def gae_fabric_crawl_out(payload, target_port, gfd_opcode):
+    """Fabric Crawl Out (Opcode 5701h)."""
+    gfd_payload = []
+    if payload:
+        gfd_payload = [int(x.strip(), 0) for x in payload.split(",")]
+    asyncio.run(
+        socketio_client.gae_fabric_crawl_out(
+            target_port=target_port, gfd_opcode=gfd_opcode, gfd_payload=gfd_payload
+        )
+    )
 
 
 @fabric_manager_group.command(name="test-dynamic-ld")

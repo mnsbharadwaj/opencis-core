@@ -200,6 +200,7 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("gae:proxyGfdMgmt")
         self._register_handler("gae:getProxyStatus")
         self._register_handler("gae:cancelProxy")
+        self._register_handler("gae:fabricCrawlOut")
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
     def _register_handler(self, event):
@@ -270,6 +271,8 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._gae_get_proxy_status(data)
             elif event_type == "gae:cancelProxy":
                 response = await self._gae_cancel_proxy(data)
+            elif event_type == "gae:fabricCrawlOut":
+                response = await self._gae_fabric_crawl_out(data)
             else:
                 response = CommandResponse(error=f"Unknown event: {event_type}")
             logger.info(self._create_message(f"Response: {pformat(response)}"))
@@ -1306,7 +1309,7 @@ class FabricManagerSocketIoServer(RunnableComponent):
 
     async def _gae_cancel_proxy(self, data) -> CommandResponse:
         """
-        Cancel Proxy Thread (580Bh).
+        Cancel Proxy Thread (580bH).
         Expected data: {"threadId": N}
         """
         thread_id = (data or {}).get("threadId", 0)
@@ -1315,6 +1318,32 @@ class FabricManagerSocketIoServer(RunnableComponent):
         )
         if response is not None:
             return CommandResponse(error="", result=return_code.name)
+        return CommandResponse(error=return_code.name)
+
+    async def _gae_fabric_crawl_out(self, data) -> CommandResponse:
+        """
+        Fabric Crawl Out (5701h).
+        Expected data:
+          {
+            "targetPort": 1,
+            "gfdOpcode": 0x0001,
+            "gfdPayload": []       # optional list of ints (byte values)
+          }
+        """
+        data = data or {}
+        target_port = data.get("targetPort", 0)
+        gfd_opcode = data.get("gfdOpcode", 0)
+        raw = data.get("gfdPayload", [])
+        gfd_payload = bytes(raw) if raw else b""
+        (return_code, response) = await self._mctp_client.fabric_crawl_out(
+            target_port=target_port, gfd_opcode=gfd_opcode, gfd_payload=gfd_payload
+        )
+        if response:
+            return CommandResponse(error="", result={
+                "targetPort": target_port,
+                "gfdReturnCode": response.embedded_resp.return_code,
+                "gfdResponsePayload": list(response.embedded_resp.payload),
+            })
         return CommandResponse(error=return_code.name)
 
 

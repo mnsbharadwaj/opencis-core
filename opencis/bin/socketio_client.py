@@ -181,6 +181,138 @@ async def unfreeze(vcs: int, vppb: int):
     await sio.disconnect()
 
 
+async def pbr_identify():
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send("pbr:identify")
+    await sio.disconnect()
+    return result
+
+
+async def pbr_configure_pid(operation: int, entries: list):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "pbr:configurePid",
+        {"operation": operation, "entries": entries},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def pbr_get_pid_binding(target_vcs: int, target_vppb: int):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "pbr:getPidBinding",
+        {"targetVcs": target_vcs, "targetVppb": target_vppb},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def pbr_configure_pid_binding(
+    operation: int,
+    target_vcs: int,
+    target_vppb: int,
+    pid: int,
+    latency_entry_base_unit: int = 0,
+    latency_entry: int = 0,
+    bw_entry_base_unit: int = 0,
+    bw_entry: int = 0,
+):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "pbr:configurePidBinding",
+        {
+            "operation": operation,
+            "targetVcs": target_vcs,
+            "targetVppb": target_vppb,
+            "pid": pid,
+            "latencyEntryBaseUnit": latency_entry_base_unit,
+            "latencyEntry": latency_entry,
+            "bwEntryBaseUnit": bw_entry_base_unit,
+            "bwEntry": bw_entry,
+        },
+    )
+    await sio.disconnect()
+    return result
+
+
+async def pbr_get_drt(drt_index: int, start_entry: int, num_entries: int):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "pbr:getDrt",
+        {"drtIndex": drt_index, "startEntry": start_entry, "numEntries": num_entries},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def pbr_set_drt(drt_index: int, start_entry: int, entries: list):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "pbr:setDrt",
+        {"drtIndex": drt_index, "startEntry": start_entry, "entries": entries},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def gae_identify():
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send("gae:identify")
+    await sio.disconnect()
+    return result
+
+
+async def gae_get_pid_access_vectors(pid: int):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "gae:getPidAccessVectors",
+        {"pid": pid},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def gae_proxy_gfd_mgmt(gfd_opcode: int, gfd_payload: list):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "gae:proxyGfdMgmt",
+        {"gfdOpcode": gfd_opcode, "gfdPayload": gfd_payload},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def gae_get_proxy_status(thread_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "gae:getProxyStatus",
+        {"threadId": thread_id},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def gae_cancel_proxy(thread_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "gae:cancelProxy",
+        {"threadId": thread_id},
+    )
+    await sio.disconnect()
+    return result
+
+
+async def gae_fabric_crawl_out(target_port: int, gfd_opcode: int, gfd_payload: list):
+    await sio.connect("http://0.0.0.0:8200")
+    result = await send(
+        "gae:fabricCrawlOut",
+        {"targetPort": target_port, "gfdOpcode": gfd_opcode, "gfdPayload": gfd_payload},
+    )
+    await sio.disconnect()
+    return result
+
+
 # Main asynchronous function to start the client
 async def start_client():
     await sio.connect("http://0.0.0.0:8200")

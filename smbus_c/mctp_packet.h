@@ -57,10 +57,10 @@
 
 /* GAE CCI Opcodes */
 #define OPCODE_IDENTIFY_GAE                 0x5800
-#define OPCODE_GET_PID_ACCESS_VECTORS       0x5801
-#define OPCODE_PROXY_GFD_MGMT               0x5802
-#define OPCODE_GET_PROXY_THREAD_STATUS      0x5803
-#define OPCODE_CANCEL_PROXY_THREAD          0x5804
+#define OPCODE_GET_PID_ACCESS_VECTORS       0x5802
+#define OPCODE_PROXY_GFD_MGMT               0x5809
+#define OPCODE_GET_PROXY_THREAD_STATUS      0x580A
+#define OPCODE_CANCEL_PROXY_THREAD          0x580B
 
 /* CCI return codes */
 #define CCI_RC_SUCCESS                      0x0000

@@ -1,6 +1,6 @@
 # GFD, GAE, & PBR Switch Design Validation Report
 
-**Scope:** GFD Device, GAE Manager, PBR Switch, and MCTP FM Port 8300.  
+**Scope:** GFD Device, GAE Manager, PBR Switch, and MCTP/SMBus FM Interfaces.  
 **Validation Summary:** 199 targeted unit tests passing successfully (352 total project tests).  
 **Date:** June 2026  
 
@@ -137,7 +137,7 @@ The following table lists the unit test files directly validating the Port-Based
 | `test_gfd_live_switch.py` | 10 | GFD & PBR Switch Live Integration |
 | `test_smbus_dual_port_pbr_cmds.py` | 7 | PBR CCI Commands over SMBus Dual Port |
 | `test_smbus_mctp_server_pbr_cmds.py` | 7 | PBR CCI Commands via SMBus MCTP Server |
-| `test_gfd_device.py` | 6 | Generic Fabric Device (GFD) Device MMIO & CCI |
+| `test_gfd_device.py` | 6 | Generic Fabric Device (GFD) Device Mailbox Logic |
 | `test_host_gae_proxy.py` | 6 | Host-side GAE Proxy mailbox commands routing |
 | `test_gae_tcp_integration.py` | 4 | GAE Proxy Routing over TCP Sockets |
 | `test_pbr_qemu_e2e.py` | 3 | PBR QEMU Data Plane E2E Ingress & Egress |
@@ -279,6 +279,7 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/component/host_llc_iogen.py` | 65 | 65 | 14 | 0 | **0%** |
 | `opencis/cxl/component/host_manager.py` | 200 | 148 | 24 | 1 | **24%** |
 | `opencis/cxl/component/irq_manager.py` | 12 | 0 | 0 | 0 | **100%** |
+| `opencis/cxl/component/mctp/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/component/mctp/fm_mctp_cci_server.py` | 77 | 9 | 4 | 0 | **89%** |
 | `opencis/cxl/component/mctp/fm_smbus_dual_port_server.py` | 291 | 59 | 32 | 9 | **78%** |
 | `opencis/cxl/component/mctp/fm_smbus_mctp_server.py` | 495 | 64 | 70 | 21 | **84%** |
@@ -297,6 +298,7 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/component/pbr_switch_manager.py` | 177 | 15 | 52 | 11 | **89%** |
 | `opencis/cxl/component/pbr_switch_router.py` | 109 | 20 | 38 | 11 | **78%** |
 | `opencis/cxl/component/physical_port_manager.py` | 147 | 73 | 52 | 0 | **44%** |
+| `opencis/cxl/component/root_complex/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/component/root_complex/cache_coherency_bridge.py` | 293 | 293 | 142 | 0 | **0%** |
 | `opencis/cxl/component/root_complex/home_agent.py` | 281 | 281 | 100 | 0 | **0%** |
 | `opencis/cxl/component/root_complex/io_bridge.py` | 112 | 112 | 20 | 0 | **0%** |
@@ -305,9 +307,11 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/component/root_complex/root_port_client_manager.py` | 41 | 41 | 4 | 0 | **0%** |
 | `opencis/cxl/component/root_complex/root_port_switch.py` | 72 | 72 | 4 | 0 | **0%** |
 | `opencis/cxl/component/short_msg_conn.py` | 148 | 91 | 34 | 3 | **33%** |
+| `opencis/cxl/component/smbus/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/component/smbus/smbus_mctp_bridge.py` | 126 | 126 | 10 | 0 | **0%** |
 | `opencis/cxl/component/switch_connection_client.py` | 105 | 30 | 24 | 8 | **64%** |
 | `opencis/cxl/component/switch_connection_manager.py` | 136 | 31 | 22 | 8 | **72%** |
+| `opencis/cxl/component/virtual_switch/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/component/virtual_switch/downstream_vppb.py` | 33 | 13 | 0 | 0 | **61%** |
 | `opencis/cxl/component/virtual_switch/port_binder.py` | 91 | 44 | 28 | 0 | **41%** |
 | `opencis/cxl/component/virtual_switch/routers.py` | 353 | 211 | 118 | 0 | **32%** |
@@ -317,8 +321,10 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/component/virtual_switch/vppb.py` | 66 | 23 | 0 | 0 | **65%** |
 | `opencis/cxl/component/virtual_switch/vppb_routing_info.py` | 6 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/component/virtual_switch_manager.py` | 64 | 23 | 18 | 0 | **60%** |
+| `opencis/cxl/config_space/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/config_space/cfg.py` | 50 | 2 | 8 | 3 | **88%** |
 | `opencis/cxl/config_space/device.py` | 25 | 8 | 2 | 0 | **63%** |
+| `opencis/cxl/config_space/doe/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/config_space/doe/cdat.py` | 55 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/config_space/doe/doe.py` | 17 | 0 | 2 | 1 | **95%** |
 | `opencis/cxl/config_space/doe/doe_table_access.py` | 79 | 39 | 12 | 1 | **45%** |
@@ -330,7 +336,10 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/config_space/dvsec/mld_dvsec.py` | 17 | 6 | 2 | 0 | **58%** |
 | `opencis/cxl/config_space/dvsec/register_locator.py` | 61 | 4 | 14 | 6 | **87%** |
 | `opencis/cxl/config_space/port.py` | 30 | 1 | 2 | 1 | **94%** |
+| `opencis/cxl/config_space/serial_number/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/config_space/serial_number/common.py` | 42 | 2 | 6 | 3 | **90%** |
+| `opencis/cxl/device/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
+| `opencis/cxl/device/config/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/device/config/dynamic_capacity_device.py` | 45 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/device/config/logical_device.py` | 31 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/device/cxl_gfd_device.py` | 70 | 9 | 6 | 1 | **84%** |
@@ -342,7 +351,9 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/device/port_device.py` | 71 | 7 | 0 | 0 | **90%** |
 | `opencis/cxl/device/root_port_device.py` | 694 | 524 | 168 | 4 | **20%** |
 | `opencis/cxl/device/upstream_port_device.py` | 54 | 7 | 0 | 0 | **87%** |
+| `opencis/cxl/environment/__init__.py` | 1 | 1 | 0 | 0 | **0%** |
 | `opencis/cxl/environment/environment.py` | 145 | 145 | 42 | 0 | **0%** |
+| `opencis/cxl/features/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/features/event_manager.py` | 24 | 6 | 2 | 0 | **69%** |
 | `opencis/cxl/features/log_manager.py` | 64 | 30 | 10 | 0 | **46%** |
 | `opencis/cxl/features/mailbox.py` | 158 | 63 | 28 | 0 | **51%** |
@@ -359,15 +370,19 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/mmio/device_register/mailbox_register.py` | 141 | 78 | 38 | 0 | **35%** |
 | `opencis/cxl/mmio/device_register/memory_device_capabilities.py` | 31 | 12 | 4 | 0 | **54%** |
 | `opencis/cxl/mmio/gfd_mmio_registers.py` | 26 | 26 | 6 | 0 | **0%** |
+| `opencis/cxl/transport/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
+| `opencis/cxl/transport/cache_fifo.py` | 38 | 38 | 0 | 0 | **0%** |
 | `opencis/cxl/transport/cci_packets.py` | 390 | 269 | 70 | 3 | **27%** |
 | `opencis/cxl/transport/common.py` | 15 | 1 | 2 | 1 | **88%** |
 | `opencis/cxl/transport/cxl_cache_packets.py` | 71 | 27 | 4 | 0 | **59%** |
 | `opencis/cxl/transport/cxl_io_packets.py` | 124 | 71 | 24 | 0 | **36%** |
 | `opencis/cxl/transport/cxl_mem_packets.py` | 79 | 27 | 0 | 0 | **66%** |
+| `opencis/cxl/transport/fields.py` | 24 | 24 | 0 | 0 | **0%** |
 | `opencis/cxl/transport/generate_packet_structs.py` | 258 | 258 | 64 | 0 | **0%** |
 | `opencis/cxl/transport/generate_py_fallback.py` | 212 | 212 | 36 | 0 | **0%** |
 | `opencis/cxl/transport/mem_benchmark.py` | 31 | 31 | 6 | 0 | **0%** |
 | `opencis/cxl/transport/mem_benchmark_legacy.py` | 19 | 19 | 4 | 0 | **0%** |
+| `opencis/cxl/transport/memory_fifo.py` | 25 | 25 | 0 | 0 | **0%** |
 | `opencis/cxl/transport/mixin.py` | 176 | 91 | 24 | 1 | **43%** |
 | `opencis/cxl/transport/packet_constants.py` | 180 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/transport/packet_structs.py` | 4021 | 2097 | 452 | 28 | **44%** |
@@ -375,10 +390,14 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/cxl/transport/pbr_packets.py` | 14 | 0 | 0 | 0 | **100%** |
 | `opencis/cxl/transport/setup.py` | 7 | 7 | 0 | 0 | **0%** |
 | `opencis/cxl/transport/sideband_packets.py` | 20 | 0 | 0 | 0 | **100%** |
+| `opencis/drivers/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/drivers/cxl_bus_driver.py` | 420 | 420 | 116 | 0 | **0%** |
 | `opencis/drivers/cxl_mem_driver.py` | 62 | 62 | 18 | 0 | **0%** |
 | `opencis/drivers/pci_bus_driver.py` | 361 | 361 | 96 | 0 | **0%** |
+| `opencis/msim/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/msim/emulator.py` | 80 | 80 | 14 | 0 | **0%** |
+| `opencis/pci/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
+| `opencis/pci/component/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/pci/component/config_space_manager.py` | 139 | 90 | 36 | 2 | **29%** |
 | `opencis/pci/component/doe_mailbox.py` | 161 | 89 | 24 | 1 | **41%** |
 | `opencis/pci/component/fifo_pair.py` | 6 | 0 | 0 | 0 | **100%** |
@@ -387,10 +406,15 @@ The following is the complete code coverage report for all files across the `ope
 | `opencis/pci/component/pci.py` | 138 | 56 | 30 | 0 | **49%** |
 | `opencis/pci/component/pci_connection.py` | 6 | 0 | 0 | 0 | **100%** |
 | `opencis/pci/component/routing_table.py` | 94 | 48 | 28 | 0 | **41%** |
+| `opencis/pci/config_space/__init__.py` | 61 | 8 | 4 | 2 | **85%** |
 | `opencis/pci/config_space/pci.py` | 298 | 92 | 46 | 2 | **62%** |
+| `opencis/pci/config_space/pcie/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/pci/config_space/pcie/doe.py` | 84 | 27 | 26 | 2 | **54%** |
 | `opencis/pci/config_space/pcie/msi.py` | 41 | 3 | 4 | 2 | **89%** |
 | `opencis/pci/config_space/pcie/pcie_capability.py` | 45 | 8 | 6 | 3 | **78%** |
+| `opencis/pci/device/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
+| `opencis/pci/device/pci_device.py` | 34 | 34 | 4 | 0 | **0%** |
+| `opencis/util/__init__.py` | 0 | 0 | 0 | 0 | **100%** |
 | `opencis/util/accessor.py` | 15 | 11 | 0 | 0 | **27%** |
 | `opencis/util/async_gatherer.py` | 18 | 0 | 4 | 0 | **100%** |
 | `opencis/util/bound_event.py` | 15 | 15 | 0 | 0 | **0%** |
@@ -408,15 +432,15 @@ The following is the complete code coverage report for all files across the `ope
 
 ## 4. Requirements Traceability Matrix
 
-The traceability matrix below connects the CXL 4.0 Specification requirements for PBR, GFD, and GAE directly to the corresponding implementation codebase and validating test cases.
+The traceability matrix below connects the CXL 4.0 Specification requirements for PBR Switch, GFD Devices, GAE, and MCTP/SMBus transport to the corresponding implementation codebase and validating test cases.
 
 ### 4.1 PBR Switch and CCI Commissioning Requirements
 
 | Req ID | Spec § | Requirement Description | Code Method | Test Case(s) |
 | :--- | :--- | :--- | :--- | :--- |
-| **REQ-PBR-01** | §7.7.13.1 | `IdentifyPbrSwitch` command must report capabilities, including `num_drts >= 1`. | `PbrSwitchManager.get_identify_info` | `test_gfd_live_fm_identify_pbr_switch`<br>`test_gfd_live_full_fm_workflow` |
+| **REQ-PBR-01** | §7.7.13.1 | `IdentifyPbrSwitch` command must report capabilities, including `num_drts >= 1`. | `PbrSwitchManager.get_identify_info` | `test_gfd_live_fm_identify_pbr_switch`<br>`test_pbr_identify` |
 | **REQ-PBR-02** | §7.7.13.1 | The `num_drts` in the Identify response must match the actual number of DRT tables. | `IdentifyPbrSwitchCommand._execute` | `test_gfd_live_fm_identify_pbr_switch` |
-| **REQ-PBR-03** | §7.7.13.5 | `ConfigurePidAssignment` must assign, read, and clear Physical Port Identifiers (PIDs). | `PbrSwitchManager.assign_pid`<br>`PbrSwitchManager.clear_pid` | `test_gfd_live_fm_configure_pid_assignment`<br>`test_assign_pid_success`<br>`test_clear_pid_success` |
+| **REQ-PBR-03** | §7.7.13.5 | `ConfigurePidAssignment` must assign, read, and clear Physical Port Identifiers (PIDs). | `PbrSwitchManager.assign_pid`<br>`PbrSwitchManager.clear_pid` | `test_gfd_live_fm_configure_pid_assignment`<br>`test_assign_pid_success`<br>`test_clear_pid_success`<br>`test_pbr_configure_pid_assignment` |
 | **REQ-PBR-04** | §7.7.13.5 | Assigning a duplicate PID to a different target port must return `INVALID_INPUT`. | `PbrSwitchManager.assign_pid` | `test_assign_pid_duplicate_different_target_rejected` |
 | **REQ-PBR-05** | §7.7.13.5 | Re-assigning an already assigned PID to the same target must exit idempotently with `SUCCESS`. | `PbrSwitchManager.assign_pid` | `test_assign_same_pid_same_target_idempotent` |
 | **REQ-PBR-06** | §7.7.13.6 | `GetPidBinding` must support looking up current assignments for a VCS/vPPB slot. | `PbrSwitchManager.get_pid_binding` | `test_gfd_live_fm_get_pid_binding`<br>`test_gfd_live_full_fm_workflow` |
@@ -432,18 +456,27 @@ The traceability matrix below connects the CXL 4.0 Specification requirements fo
 
 | Req ID | Spec § | Requirement Description | Code Method | Test Case(s) |
 | :--- | :--- | :--- | :--- | :--- |
-| **REQ-GFD-01** | §8.2 | The GFD device must expose standard CXL Type 3 SLD configuration space with no CXL.mem. | `CxlGfdDevice` | `test_gfd_no_bar`<br>`test_gfd_starts_and_stops` |
-| **REQ-GFD-02** | §8.2 | The GFD must report its PCI base class as `MEMORY_CONTROLLER` and device ID as `SW_GFD_DID`. | `CxlGfdDevice` | `test_gfd_cci_identify` |
-| **REQ-GFD-03** | §8.2 | GFD BAR-0 size must be exactly 4 KB and contain baseline registers. | `CxlGfdDevice.get_bar_size` | `test_gfd_bar_size` |
-| **REQ-GFD-04** | §8.2 | GFD status register must report `READY` after its internal startup finishes. | `GfdMmioRegisters` | `test_gfd_starts_and_stops` |
+| **REQ-GFD-01** | §7.7.13 | GFD must NOT expose any PCIe BAR configuration space (has NO host-visible registers). | `CxlGfdDevice` | `test_gfd_no_bar` |
+| **REQ-GFD-02** | §7.7.13 | GFD must communicate exclusively via the `cci_fifo` mailbox interface. | `CxlGfdDevice` | `test_gfd_cci_mailbox_dispatch` |
+| **REQ-GFD-03** | §7.7.13 | GFD must respond to CCI Identify command returning GFD component type `0x04`. | `IdentifyCommand` | `test_gfd_cci_identify` |
+| **REQ-GFD-04** | §7.7.13 | GFD must gracefully handle unknown opcodes and return `UNSUPPORTED`. | `CxlGfdDevice` | `test_gfd_cci_unknown_opcode` |
+| **REQ-GFD-05** | §7.7.13 | GFD must start and stop cleanly (lifecycle validation). | `GenericFabricDevice.run` | `test_gfd_starts_and_stops` |
 
 ### 4.3 Generic Access Endpoint (GAE) Requirements
 
 | Req ID | Spec § | Requirement Description | Code Method | Test Case(s) |
 | :--- | :--- | :--- | :--- | :--- |
-| **REQ-GAE-01** | §7.7.14 | `IdentifyGae` (0x5800) must return the total number of vPPBs and interrupt vectors. | `IdentifyGaeCommand._execute` | `test_identify_gae_command_execute_with_vppbs`<br>`test_identify_gae_opcode_is_0x5800` |
-| **REQ-GAE-02** | §7.7.14 | `GetPidAccessVectors` (0x5802) must return global memory and virtualization vectors. | `GetPidAccessVectorsCommand` | `test_get_pid_access_vectors_command_execute` |
-| **REQ-GAE-03** | §7.7.14 | `ProxyGfdMgmt` (0x5809) must run asynchronously in the background and return a `thread_id`. | `GaeManager.start_proxy` | `test_gae_start_proxy_executor_returns_thread_id`<br>`test_proxy_cmd_returns_thread_id` |
+| **REQ-GAE-01** | §7.7.14 | `IdentifyGae` (0x5800) must return the total number of vPPBs and capability bits. | `IdentifyGaeCommand._execute` | `test_identify_gae_command_execute_with_vppbs`<br>`test_identify_gae_opcode_is_0x5800`<br>`test_gfd_live_fm_identify_gae` |
+| **REQ-GAE-02** | §7.7.14 | `GetPidAccessVectors` (0x5802) must return global memory and virtualization vectors. | `GetPidAccessVectorsCommand` | `test_get_pid_access_vectors_command_execute`<br>`test_gfd_live_fm_get_pid_access_vectors` |
+| **REQ-GAE-03** | §7.7.14 | `ProxyGfdMgmt` (0x5809) must run asynchronously in the background and return a `thread_id`. | `GaeManager.start_proxy` | `test_gae_start_proxy_executor_returns_thread_id`<br>`test_proxy_cmd_returns_thread_id`<br>`test_gfd_live_fm_proxy_gfd_mgmt_flow` |
 | **REQ-GAE-04** | §7.7.14 | `GetProxyThreadStatus` (0x580A) must retrieve proxy command execution results. | `GaeManager.get_proxy_status` | `test_get_proxy_thread_status_completed`<br>`test_get_proxy_thread_status_unknown_thread` |
-| **REQ-GAE-05** | §7.7.14 | `CancelProxyThread` (0x580B) must cancel a running GAE proxy thread task. | `GaeManager.cancel_proxy` | `test_cancel_proxy_thread_success`<br>`test_cancel_proxy_thread_unknown_id` |
+| **REQ-GAE-05** | §7.7.14 | `CancelProxyThread` (0x580B) must cancel a running GAE proxy thread task. | `GaeManager.cancel_proxy` | `test_cancel_proxy_thread_success`<br>`test_cancel_proxy_thread_unknown_id`<br>`test_gfd_live_fm_cancel_proxy_thread` |
 | **REQ-GAE-06** | §7.7.14 | The GAE must support tunneling commands downstream to physical ports via the DSP CCI tunnel. | `GaeManager.set_gfd_tunnel` | `test_proxy_via_dsp_cci_tunnel_end_to_end`<br>`test_fabric_crawl_out_command_full_path` |
+
+### 4.4 MCTP & SMBus Transport Requirements
+
+| Req ID | Description | Code Method / Interface | Test Case(s) |
+| :--- | :--- | :--- | :--- |
+| **REQ-MCTP-01** | MCTP packets must be correctly depacketized, forwarded, and repacketized over TCP Port 8300. | `FmMctpCciServer`<br>`MctpCciApiClient` | `test_mctp_fm_port.py`<br>`test_mctp_fm_port_integration.py` |
+| **REQ-SMBUS-01** | MCTP/CCI commands must be transported and validated over SMBus dual port interfaces. | `FmSmbusDualPortServer` | `test_smbus_dual_port.py`<br>`test_smbus_dual_port_pbr_cmds.py` |
+| **REQ-SMBUS-02** | MCTP command requests must bridge successfully from SMBus to MCTP target connections. | `SmbusMctpBridge` | `test_smbus_mctp_bridge.py`<br>`test_smbus_mctp_server_pbr_cmds.py` |

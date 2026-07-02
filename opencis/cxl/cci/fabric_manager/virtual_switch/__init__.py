@@ -14,3 +14,10 @@ from .bind_vppb import BindVppbCommand, BindVppbRequestPayload
 from .unbind_vppb import UnbindVppbCommand, UnbindVppbRequestPayload
 from .freeze_vppb import FreezeVppbCommand, FreezeVppbRequestPayload
 from .unfreeze_vppb import UnfreezeVppbCommand, UnfreezeVppbRequestPayload
+from .generate_aer_event import (
+    GenerateAerEventCommand,
+    GenerateAerEventRequestPayload,
+)
+from .tunnel_management import (
+    TunnelManagementCommand,
+)

@@ -22,6 +22,11 @@ from opencis.cxl.cci.fabric_manager.physical_switch import (
     GetPhysicalPortStateCommand,
     GetPhysicalPortStateRequestPayload,
     GetPhysicalPortStateResponsePayload,
+    PhysicalPortControlCommand,
+    PhysicalPortControlRequestPayload,
+    SendPpbCxlIoConfigurationRequestCommand,
+    SendPpbCxlIoConfigRequestPayload,
+    SendPpbCxlIoConfigResponsePayload,
 )
 from opencis.cxl.cci.fabric_manager.virtual_switch import (
     GetVirtualCxlSwitchInfoCommand,
@@ -35,6 +40,8 @@ from opencis.cxl.cci.fabric_manager.virtual_switch import (
     FreezeVppbRequestPayload,
     UnfreezeVppbCommand,
     UnfreezeVppbRequestPayload,
+    GenerateAerEventCommand,
+    GenerateAerEventRequestPayload,
 )
 from opencis.cxl.cci.fabric_manager.mld_components import (
     GetLdInfoCommand,
@@ -630,3 +637,43 @@ class MctpCciApiClient(RunnableComponent):
         )
         logger.debug(self._create_message(response.get_pretty_print()))
         return (return_code, response)
+
+    async def physical_port_control(
+        self, request: PhysicalPortControlRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Physical Port Control (Opcode 5102h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: PhysicalPortControlCommand.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def send_ppb_cxl_io_config_request(
+        self, request: SendPpbCxlIoConfigRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[SendPpbCxlIoConfigResponsePayload]]:
+        """Send PPB CXL.io Configuration Request (Opcode 5103h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: SendPpbCxlIoConfigurationRequestCommand.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = SendPpbCxlIoConfigurationRequestCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        return (return_code, response)
+
+    async def generate_aer_event(
+        self, request: GenerateAerEventRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Generate AER Event (Opcode 5203h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: GenerateAerEventCommand.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+

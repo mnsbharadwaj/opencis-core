@@ -14,3 +14,12 @@ from .get_physical_port_state import (
     GetPhysicalPortStateRequestPayload,
     GetPhysicalPortStateResponsePayload,
 )
+from .physical_port_control import (
+    PhysicalPortControlCommand,
+    PhysicalPortControlRequestPayload,
+)
+from .send_ppb_cxl_io_configuration_request import (
+    SendPpbCxlIoConfigurationRequestCommand,
+    SendPpbCxlIoConfigRequestPayload,
+    SendPpbCxlIoConfigResponsePayload,
+)

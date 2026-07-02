@@ -64,6 +64,18 @@ from opencis.cxl.config_space.doe.cdat import (
     HMAT_SLLB_FLAG,
 )
 
+from opencis.cxl.device.config.dynamic_capacity_device import (
+    RegionConfigStruct,
+    DynamicCapacityExtentStruct,
+)
+from opencis.cxl.cci.memory_device.dynamic_capacity import (
+    GetDynamicCapacityConfig,
+    GetDynamicCapacityExtentList,
+    AddDynamicCapacityResponse,
+    ReleaseDynamicCapacity,
+)
+
+
 SIZE_256MB = 256 * 1024 * 1024
 
 
@@ -188,6 +200,21 @@ class CxlMemoryDeviceComponent(CxlDeviceComponent):
         self._event_manager = EventManager()
         self._log_manager = LogManager()
         self._identity = identity
+
+        self._region_config_structs: List[RegionConfigStruct] = []
+        self._dc_extent_list: List[DynamicCapacityExtentStruct] = []
+
+        total_capacity_bytes = identity.get_total_capacity()
+        default_region = RegionConfigStruct()
+        default_region.region_base = 0
+        default_region.region_decode_len = total_capacity_bytes // SIZE_256MB if total_capacity_bytes else 1
+        default_region.region_len = total_capacity_bytes if total_capacity_bytes else SIZE_256MB
+        default_region.region_block_size = SIZE_256MB
+        default_region.dsmad_handle.nonvolatile = 0
+        default_region.dsmad_handle.sharable = 0
+        default_region.flags.sanitize_on_release = 0
+        self._region_config_structs.append(default_region)
+
         primary_mailbox_capabilities = MailboxCapabilities(
             payload_size=MIN_PAYLOAD_SIZE,
             mb_doorbell_interrupt_capable=0,
@@ -204,7 +231,12 @@ class CxlMemoryDeviceComponent(CxlDeviceComponent):
             GetLog(self._log_manager),
             GetSupportedLogs(self._log_manager),
             IdentifyMemoryDevice(self._identity),
+            GetDynamicCapacityConfig(self._region_config_structs),
+            GetDynamicCapacityExtentList(self._dc_extent_list),
+            AddDynamicCapacityResponse(self._dc_extent_list),
+            ReleaseDynamicCapacity(self._dc_extent_list),
         ]
+
         self._primary_mailbox = CxlMailbox(
             capabilities=primary_mailbox_capabilities, commands=primary_mailbox_commands
         )

@@ -165,3 +165,77 @@ async def test_generate_aer_event_command():
     req = GenerateAerEventCommand.create_cci_request(req_payload)
     resp = await cmd._execute(req)
     assert resp.return_code == CCI_RETURN_CODE.INVALID_INPUT
+
+
+@pytest.mark.asyncio
+async def test_dcd_switch_commands():
+    from opencis.cxl.cci.fabric_manager.dcd_management import (
+        GetDcdInfoCommand,
+        GetDcdInfoRequestPayload,
+        GetHostDCRegionConfiguration,
+        GetHostDCRegionConfigRequestPayload,
+        SetDCRegionConfiguration,
+        SetDCRegionConfigRequestPayload,
+        GetDCRegionExtentLists,
+        GetDCRegionExtentListsRequestPayload,
+        InitiateDynamicCapacityAdd,
+        InitiateDynamicCapacityAddRequestPayload,
+        InitiateDynamicCapacityRelease,
+        InitiateDynamicCapacityReleaseRequestPayload,
+    )
+    pm = MockPhysicalPortManager(port_count=4)
+    vsm = MockVirtualSwitchManager()
+    
+    # 1. Get Dcd Info
+    cmd_info = GetDcdInfoCommand(pm, vsm)
+    req_info = GetDcdInfoCommand.create_cci_request(GetDcdInfoRequestPayload(port_id=1))
+    resp_info = await cmd_info._execute(req_info)
+    assert resp_info.return_code == CCI_RETURN_CODE.SUCCESS
+    res_info = GetDcdInfoCommand.parse_response_payload(resp_info.payload)
+    assert res_info.total_dynamic_capacity == 0x40000000
+
+    # 2. Get Host DC Region Config
+    cmd_region = GetHostDCRegionConfiguration(pm, vsm)
+    req_region = GetHostDCRegionConfiguration.create_cci_request(
+        GetHostDCRegionConfigRequestPayload(host_id=0, region_count=1, starting_region_index=0)
+    )
+    resp_region = await cmd_region._execute(req_region)
+    assert resp_region.return_code == CCI_RETURN_CODE.SUCCESS
+    # Parse the response payload from the packet
+    from opencis.cxl.cci.fabric_manager.dcd_management import GetHostDCRegionConfigResponsePayload
+    res_payload = GetHostDCRegionConfigResponsePayload.parse(resp_region.payload)
+    assert res_payload.num_available_regions == 1
+    assert res_payload.dc_region_configs[0].region_len == 0x40000000
+
+    # 3. Set DC Region Config
+    cmd_set_region = SetDCRegionConfiguration(pm, vsm)
+    req_set = SetDCRegionConfiguration.create_cci_request(
+        SetDCRegionConfigRequestPayload(region_id=0, region_block_size=0x10000000, flags=0)
+    )
+    resp_set = await cmd_set_region._execute(req_set)
+    assert resp_set.return_code == CCI_RETURN_CODE.SUCCESS
+
+    # 4. Get DC Region Extent Lists
+    cmd_extents = GetDCRegionExtentLists(pm, vsm)
+    req_ext = GetDCRegionExtentLists.create_cci_request(
+        GetDCRegionExtentListsRequestPayload(host_id=0, region_block_size=0x10000000, flags=0)
+    )
+    resp_ext = await cmd_extents._execute(req_ext)
+    assert resp_ext.return_code == CCI_RETURN_CODE.SUCCESS
+
+    # 5. Initiate Dynamic Capacity Add
+    cmd_add = InitiateDynamicCapacityAdd(pm, vsm)
+    req_add = InitiateDynamicCapacityAdd.create_cci_request(
+        InitiateDynamicCapacityAddRequestPayload(host_id=0, region_num=0, length=0x10000000, ext_count=0, dc_extents=[])
+    )
+    resp_add = await cmd_add._execute(req_add)
+    assert resp_add.return_code == CCI_RETURN_CODE.SUCCESS
+
+    # 6. Initiate Dynamic Capacity Release
+    cmd_rel = InitiateDynamicCapacityRelease(pm, vsm)
+    req_rel = InitiateDynamicCapacityRelease.create_cci_request(
+        InitiateDynamicCapacityReleaseRequestPayload(host_id=0, extent_count=0, dc_extents=[])
+    )
+    resp_rel = await cmd_rel._execute(req_rel)
+    assert resp_rel.return_code == CCI_RETURN_CODE.SUCCESS
+

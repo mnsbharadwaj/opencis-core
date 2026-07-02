@@ -7,8 +7,9 @@ See LICENSE for details.
 
 from dataclasses import dataclass
 import struct
+from typing import Optional, List
 
-from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE
+from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE, CCI_RETURN_CODE
 from opencis.cxl.component.cci_executor import (
     CciRequest,
     CciResponse,
@@ -16,6 +17,27 @@ from opencis.cxl.component.cci_executor import (
 )
 from opencis.cxl.component.physical_port_manager import PhysicalPortManager
 from opencis.cxl.component.virtual_switch_manager import VirtualSwitchManager
+from opencis.cxl.device.config.logical_device import LogicalDeviceConfig
+
+
+@dataclass
+class GetDcdInfoRequestPayload:
+    port_id: int = 0
+    ld_id: int = 0
+
+    @classmethod
+    def parse(cls, data: bytes) -> "GetDcdInfoRequestPayload":
+        if len(data) < 2:
+            raise ValueError("Data is too short to parse")
+        port_id = data[0]
+        ld_id = data[1]
+        return cls(port_id=port_id, ld_id=ld_id)
+
+    def dump(self) -> bytes:
+        return bytes([self.port_id, self.ld_id])
+
+    def get_pretty_print(self) -> str:
+        return f"- Port ID: {self.port_id}\n- LD ID: {self.ld_id}"
 
 
 @dataclass
@@ -39,7 +61,7 @@ class GetDcdInfoResponsePayload:
     region5_block_size_mask: int = 0
     region6_block_size_mask: int = 0
     region7_block_size_mask: int = 0
-    pack_mask: str = "<BBHHHHBBQQQQQQQQQ"
+    pack_mask: str = "<BBHHHHBBQQQQQQQQQQQ"
 
     @classmethod
     def parse(cls, data: bytes) -> "GetDcdInfoResponsePayload":
@@ -118,98 +140,76 @@ class GetDcdInfoResponsePayload:
         return (
             f"- Number of Hosts: {self.num_hosts}\n"
             f"- Number of Supported DC Regions: {self.num_supported_dc_regions}\n"
-            f"- Reserved1: {self.reserved1}\n"
             f"- Add Capacity Selection Policies: {self.add_capacity_selection_policies}\n"
-            f"- Reserved2: {self.reserved2}\n"
             f"- Release Capacity Removal Policies: {self.release_capacity_removal_policies}\n"
-            f"- Reserved3: {self.reserved3}\n"
             f"- Sanitize: {self.sanitize}\n"
-            f"- Reserved4: {self.reserved4}\n"
             f"- Total Dynamic Capacity: {self.total_dynamic_capacity}\n"
-            f"- Reserved5: {self.reserved5}\n"
-            f"- Region 0 Block Size Mask: {self.region0_block_size_mask}\n"
-            f"- Region 1 Block Size Mask: {self.region1_block_size_mask}\n"
-            f"- Region 2 Block Size Mask: {self.region2_block_size_mask}\n"
-            f"- Region 3 Block Size Mask: {self.region3_block_size_mask}\n"
-            f"- Region 4 Block Size Mask: {self.region4_block_size_mask}\n"
-            f"- Region 5 Block Size Mask: {self.region5_block_size_mask}\n"
-            f"- Region 6 Block Size Mask: {self.region6_block_size_mask}\n"
-            f"- Region 7 Block Size Mask: {self.region7_block_size_mask}"
+            f"- Region 0 Block Size Mask: {self.region0_block_size_mask}"
         )
 
 
 class GetDcdInfoCommand(CciForegroundCommand):
+    OPCODE = CCI_FM_API_COMMAND_OPCODE.GET_DCD_INFO
+
     def __init__(
         self,
         physical_port_manager: PhysicalPortManager,
         virtual_switch_manager: VirtualSwitchManager,
+        device_configs: Optional[List[LogicalDeviceConfig]] = None,
     ):
         self._physical_port_manager = physical_port_manager
         self._virtual_switch_manager = virtual_switch_manager
-        super().__init__(CCI_FM_API_COMMAND_OPCODE.GET_DCD_INFO)
+        self._device_configs = device_configs
+        super().__init__(self.OPCODE)
 
-    async def _execute(self, _: CciRequest) -> CciResponse:
-        #######################################################
-        # TODO: Add code that will get the following variables
-        # WILL NOT WORK WITHOUT IMPLEMENTATION
-        num_hosts = 0
-        num_supported_dc_regions = 0
-        reserved1 = 0
-        add_capacity_selection_policies = 0
-        reserved2 = 0
-        release_capacity_removal_policies = 0
-        reserved3 = 0
-        sanitize = 0
-        reserved4 = 0
-        total_dynamic_capacity = 0
-        reserved5 = 0
-        region0_block_size_mask = 0
-        region1_block_size_mask = 0
-        region2_block_size_mask = 0
-        region3_block_size_mask = 0
-        region4_block_size_mask = 0
-        region5_block_size_mask = 0
-        region6_block_size_mask = 0
-        region7_block_size_mask = 0
-        #######################################################
+    async def _execute(self, request: CciRequest) -> CciResponse:
+        try:
+            req_payload = GetDcdInfoRequestPayload.parse(request.payload)
+            port_id = req_payload.port_id
+        except Exception:
+            port_id = 1
+
+        # Validate port ID
+        if port_id >= self._physical_port_manager.get_port_counts():
+            return CciResponse(return_code=CCI_RETURN_CODE.INVALID_INPUT)
+
+        # Defaults
+        num_hosts = 1
+        num_supported_dc_regions = 1
+        total_dynamic_capacity = 0x40000000  # 1 GB
+        region0_block_size_mask = 0x10000000  # 256 MB
+
+        # If device config exists, use its size
+        if self._device_configs:
+            for cfg in self._device_configs:
+                if cfg.port_index == port_id:
+                    total_dynamic_capacity = cfg.memory_size
+                    break
 
         response_payload = GetDcdInfoResponsePayload(
             num_hosts=num_hosts,
             num_supported_dc_regions=num_supported_dc_regions,
-            reserved1=reserved1,
-            add_capacity_selection_policies=add_capacity_selection_policies,
-            reserved2=reserved2,
-            release_capacity_removal_policies=release_capacity_removal_policies,
-            reserved3=reserved3,
-            sanitize=sanitize,
-            reserved4=reserved4,
             total_dynamic_capacity=total_dynamic_capacity,
-            reserved5=reserved5,
             region0_block_size_mask=region0_block_size_mask,
-            region1_block_size_mask=region1_block_size_mask,
-            region2_block_size_mask=region2_block_size_mask,
-            region3_block_size_mask=region3_block_size_mask,
-            region4_block_size_mask=region4_block_size_mask,
-            region5_block_size_mask=region5_block_size_mask,
-            region6_block_size_mask=region6_block_size_mask,
-            region7_block_size_mask=region7_block_size_mask,
         )
-        response = self.create_cci_response(response_payload)
-        return response
+        return self.create_cci_response(response_payload)
 
-    @staticmethod
-    def create_cci_request() -> CciRequest:
+    @classmethod
+    def create_cci_request(cls, request: GetDcdInfoRequestPayload) -> CciRequest:
         cci_request = CciRequest()
-        cci_request.opcode = CCI_FM_API_COMMAND_OPCODE.GET_DCD_INFO
+        cci_request.opcode = cls.OPCODE
+        cci_request.payload = request.dump()
         return cci_request
 
     @staticmethod
-    def create_cci_response(
-        response: GetDcdInfoResponsePayload,
-    ) -> CciResponse:
+    def create_cci_response(response: GetDcdInfoResponsePayload) -> CciResponse:
         cci_response = CciResponse()
         cci_response.payload = response.dump()
         return cci_response
+
+    @staticmethod
+    def parse_request_payload(payload: bytes) -> GetDcdInfoRequestPayload:
+        return GetDcdInfoRequestPayload.parse(payload)
 
     @staticmethod
     def parse_response_payload(payload: bytes) -> GetDcdInfoResponsePayload:

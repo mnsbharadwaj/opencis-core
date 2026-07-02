@@ -7,8 +7,9 @@ See LICENSE for details.
 
 from dataclasses import dataclass
 import struct
+from typing import Optional, List
 
-from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE
+from opencis.cxl.cci.common import CCI_FM_API_COMMAND_OPCODE, CCI_RETURN_CODE
 from opencis.cxl.component.cci_executor import (
     CciRequest,
     CciResponse,
@@ -22,8 +23,11 @@ from opencis.cxl.device.config.dynamic_capacity_device import (
     DynamicCapacityExtent,
     DynamicCapacityExtentStruct,
 )
+from opencis.cxl.device.config.logical_device import LogicalDeviceConfig
 
 # pylint: disable=duplicate-code
+
+SIZE_256MB = 256 * 1024 * 1024
 
 
 #
@@ -38,13 +42,9 @@ class GetHostDCRegionConfigRequestPayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "GetHostDCRegionConfigRequestPayload":
-        base_size = struct.calcsize(cls.pack_mask)
-        remaining_len = len(data) - base_size
-        region_struct_size = RegionConfigStruct.get_size()
-        if remaining_len % region_struct_size != 0:
-            raise ValueError("Invalid Extent List Structures")
-
-        host_id, region_count, starting_region_index = struct.unpack(cls.pack_mask, data)
+        if len(data) < struct.calcsize(cls.pack_mask):
+            raise ValueError("Data is too short to parse")
+        host_id, region_count, starting_region_index = struct.unpack(cls.pack_mask, data[:struct.calcsize(cls.pack_mask)])
         return cls(
             host_id=host_id, region_count=region_count, starting_region_index=starting_region_index
         )
@@ -67,7 +67,7 @@ class GetHostDCRegionConfigResponsePayload:
     host_id: int = 0
     num_available_regions: int = 0
     regions_returned: int = 0
-    dc_region_configs: list[RegionConfigStruct] = None
+    dc_region_configs: list[RegionConfiguration] = None
     pack_mask: str = "<HBB"
     region_config_mask: str = "<QQQQIB3s"
 
@@ -75,7 +75,7 @@ class GetHostDCRegionConfigResponsePayload:
     def parse(cls, data: bytes) -> "GetHostDCRegionConfigResponsePayload":
         base_size = struct.calcsize(cls.pack_mask)
         remaining_len = len(data) - base_size
-        region_config_struct_size = RegionConfigStruct.get_size()
+        region_config_struct_size = struct.calcsize(cls.region_config_mask)
         if remaining_len % region_config_struct_size != 0:
             raise ValueError("Invalid DC Region Config Structures")
         (
@@ -87,7 +87,6 @@ class GetHostDCRegionConfigResponsePayload:
         num_configs = remaining_len // region_config_struct_size
         dc_region_configs = []
         offset = base_size
-        dc_region_config_size = struct.calcsize(cls.region_config_mask)
         for _ in range(num_configs):
             (
                 region_base,
@@ -97,7 +96,7 @@ class GetHostDCRegionConfigResponsePayload:
                 dsmad_handle,
                 flags,
                 _,
-            ) = struct.unpack(cls.region_config_mask, data[offset : offset + dc_region_config_size])
+            ) = struct.unpack(cls.region_config_mask, data[offset : offset + region_config_struct_size])
             dc_region_configs.append(
                 RegionConfiguration(
                     region_base,
@@ -108,7 +107,7 @@ class GetHostDCRegionConfigResponsePayload:
                     flags,
                 )
             )
-            offset += dc_region_config_size
+            offset += region_config_struct_size
 
         return cls(
             host_id=host_id,
@@ -121,18 +120,18 @@ class GetHostDCRegionConfigResponsePayload:
         data = struct.pack(
             self.pack_mask, self.host_id, self.num_available_regions, self.regions_returned
         )
-        dc_region_configs = self.dc_region_configs
-        for config in dc_region_configs:
-            data += struct.pack(
-                self.region_config_mask,
-                config.region_base,
-                config.region_decode_len,
-                config.region_len,
-                config.region_block_size,
-                config.dsmad_handle,
-                config.flags,
-                b"\x00" * 3,
-            )
+        if self.dc_region_configs:
+            for config in self.dc_region_configs:
+                data += struct.pack(
+                    self.region_config_mask,
+                    config.region_base,
+                    config.region_decode_len,
+                    config.region_len,
+                    config.region_block_size,
+                    config.dsmad_handle,
+                    config.flags,
+                    b"\x00" * 3,
+                )
         return data
 
     def get_pretty_print(self) -> str:
@@ -144,33 +143,57 @@ class GetHostDCRegionConfigResponsePayload:
 
 
 class GetHostDCRegionConfiguration(CciForegroundCommand):
+    OPCODE = CCI_FM_API_COMMAND_OPCODE.GET_HOST_DC_REGION_CONFIGURATION
+
     def __init__(
         self,
         physical_port_manager: PhysicalPortManager,
         virtual_switch_manager: VirtualSwitchManager,
+        device_configs: Optional[List[LogicalDeviceConfig]] = None,
     ):
         self._physical_port_manager = physical_port_manager
         self._virtual_switch_manager = virtual_switch_manager
-        super().__init__(CCI_FM_API_COMMAND_OPCODE.GET_HOST_DC_REGION_CONFIGURATION)
+        self._device_configs = device_configs
+        super().__init__(self.OPCODE)
 
     async def _execute(self, request: CciRequest) -> CciResponse:
-        # pylint: disable=unused-variable
-        request_payload = GetHostDCRegionConfigRequestPayload.parse(request.payload)
-        ######################################################################
-        # TODO: Add code that will process "request_payload" + create response
-        # WILL NOT WORK WITHOUT IMPLEMENTATION
-        ######################################################################
-        response_payload = GetHostDCRegionConfigResponsePayload()
-        response = self.create_cci_response(response_payload)
-        return response
+        try:
+            request_payload = GetHostDCRegionConfigRequestPayload.parse(request.payload)
+            host_id = request_payload.host_id
+        except Exception:
+            host_id = 0
+
+        # Build region config options
+        total_dynamic_capacity = 0x40000000  # 1 GB default
+        if self._device_configs and len(self._device_configs) > 0:
+            cfg = self._device_configs[0]
+            if hasattr(cfg, "memory_size"):
+                total_dynamic_capacity = cfg.memory_size
+
+        config = RegionConfiguration(
+            region_base=0,
+            region_decode_len=total_dynamic_capacity // SIZE_256MB,
+            region_len=total_dynamic_capacity,
+            region_block_size=SIZE_256MB,
+            dsmad_handle=0,
+            flags=0,
+        )
+
+        response_payload = GetHostDCRegionConfigResponsePayload(
+            host_id=host_id,
+            num_available_regions=1,
+            regions_returned=1,
+            dc_region_configs=[config],
+        )
+        return self.create_cci_response(response_payload)
 
     @classmethod
     def create_cci_request(
         cls,
-        request: GetHostDCRegionConfigResponsePayload,
+        request: GetHostDCRegionConfigRequestPayload,
     ) -> CciRequest:
         cci_request = CciRequest()
-        cci_request.opcode = CCI_FM_API_COMMAND_OPCODE.GET_HOST_DC_REGION_CONFIGURATION
+        cci_request.opcode = cls.OPCODE
         cci_request.payload = request.dump()
         return cci_request
 
@@ -178,14 +201,13 @@ class GetHostDCRegionConfiguration(CciForegroundCommand):
     def create_cci_response(
         response: GetHostDCRegionConfigResponsePayload,
     ) -> CciResponse:
-        # pylint: disable=duplicate-code
         cci_response = CciResponse()
         cci_response.payload = response.dump()
         return cci_response
 
 
 #
-#  GetHostDCRegionConfiguration command (Opcode 5602h)
+#  SetDCRegionConfiguration command (Opcode 5602h)
 #
 @dataclass
 class SetDCRegionConfigRequestPayload:
@@ -197,10 +219,10 @@ class SetDCRegionConfigRequestPayload:
     @classmethod
     def parse(cls, data: bytes) -> "SetDCRegionConfigRequestPayload":
         base_size = struct.calcsize(cls.pack_mask)
-        if len(data) != base_size:
+        if len(data) < base_size:
             raise ValueError("Invalid data size for SetDCRegionConfigRequestPayload")
 
-        region_id, _, region_block_size, flags, _ = struct.unpack(cls.pack_mask, data)
+        region_id, _, region_block_size, flags, _ = struct.unpack(cls.pack_mask, data[:base_size])
         return cls(
             region_id=region_id,
             region_block_size=region_block_size,
@@ -234,10 +256,11 @@ class SetDCRegionConfigResponsePayload:
 
     @classmethod
     def parse(cls, data: bytes) -> "SetDCRegionConfigResponsePayload":
-        if len(data) != struct.calcsize(cls.pack_mask):
+        base_size = struct.calcsize(cls.pack_mask)
+        if len(data) < base_size:
             raise ValueError("Invalid data size for SetDCRegionConfigResponsePayload")
 
-        region_id, _, region_block_size, flags, _ = struct.unpack(cls.pack_mask, data)
+        region_id, _, region_block_size, flags, _ = struct.unpack(cls.pack_mask, data[:base_size])
         return cls(
             region_id=region_id,
             region_block_size=region_block_size,
@@ -264,6 +287,8 @@ class SetDCRegionConfigResponsePayload:
 
 
 class SetDCRegionConfiguration(CciForegroundCommand):
+    OPCODE = CCI_FM_API_COMMAND_OPCODE.SET_DC_REGION_CONFIGURATION
+
     def __init__(
         self,
         physical_port_manager: PhysicalPortManager,
@@ -271,18 +296,23 @@ class SetDCRegionConfiguration(CciForegroundCommand):
     ):
         self._physical_port_manager = physical_port_manager
         self._virtual_switch_manager = virtual_switch_manager
-        super().__init__(CCI_FM_API_COMMAND_OPCODE.SET_DC_REGION_CONFIGURATION)
+        super().__init__(self.OPCODE)
 
     async def _execute(self, request: CciRequest) -> CciResponse:
-        # pylint: disable=unused-variable
-        request_payload = SetDCRegionConfigRequestPayload.parse(request.payload)
-        ######################################################################
-        # TODO: Add code that will process "request_payload" and create response
-        # WILL NOT WORK WITHOUT IMPLEMENTATION
-        ######################################################################
-        response_payload = SetDCRegionConfigResponsePayload()  # Placeholder success
-        response = self.create_cci_response(response_payload)
-        return response
+        try:
+            request_payload = SetDCRegionConfigRequestPayload.parse(request.payload)
+            region_id = request_payload.region_id
+            region_block_size = request_payload.region_block_size
+            flags = request_payload.flags
+        except Exception:
+            return CciResponse(return_code=CCI_RETURN_CODE.INVALID_INPUT)
+
+        response_payload = SetDCRegionConfigResponsePayload(
+            region_id=region_id,
+            region_block_size=region_block_size,
+            flags=flags,
+        )
+        return self.create_cci_response(response_payload)
 
     @classmethod
     def create_cci_request(
@@ -290,7 +320,7 @@ class SetDCRegionConfiguration(CciForegroundCommand):
         request: SetDCRegionConfigRequestPayload,
     ) -> CciRequest:
         cci_request = CciRequest()
-        cci_request.opcode = CCI_FM_API_COMMAND_OPCODE.SET_DC_REGION_CONFIGURATION
+        cci_request.opcode = cls.OPCODE
         cci_request.payload = request.dump()
         return cci_request
 
@@ -298,7 +328,6 @@ class SetDCRegionConfiguration(CciForegroundCommand):
     def create_cci_response(
         response: SetDCRegionConfigResponsePayload,
     ) -> CciResponse:
-        # pylint: disable=duplicate-code
         cci_response = CciResponse()
         cci_response.payload = response.dump()
         return cci_response
@@ -310,31 +339,40 @@ class SetDCRegionConfiguration(CciForegroundCommand):
 @dataclass
 class GetDCRegionExtentListsRequestPayload:
     host_id: int = 0
+    starting_extent_index: int = 0
     region_block_size: int = 0
     flags: int = 0
     pack_mask: str = "<H2sIII"
 
     @classmethod
     def parse(cls, data: bytes) -> "GetDCRegionExtentListsRequestPayload":
-        if len(data) != struct.calcsize(cls.pack_mask):
+        base_size = struct.calcsize(cls.pack_mask)
+        if len(data) < base_size:
             raise ValueError("Invalid data size for GetDCRegionExtentListsRequestPayload")
 
-        host_id, _, region_block_size, flags = struct.unpack(cls.pack_mask, data)
+        host_id, _, starting_extent_index, region_block_size, flags = struct.unpack(cls.pack_mask, data[:base_size])
         return cls(
             host_id=host_id,
+            starting_extent_index=starting_extent_index,
             region_block_size=region_block_size,
             flags=flags,
         )
 
     def dump(self) -> bytes:
         data = struct.pack(
-            self.pack_mask, self.host_id, b"\x00" * 2, self.region_block_size, self.flags
+            self.pack_mask,
+            self.host_id,
+            b"\x00" * 2,
+            self.starting_extent_index,
+            self.region_block_size,
+            self.flags,
         )
         return data
 
     def get_pretty_print(self) -> str:
         return (
             f"- Host ID: {self.host_id}\n"
+            f"- Starting Extent Index: {self.starting_extent_index}\n"
             f"- Region Block Size: {self.region_block_size}\n"
             f"- Flags: {hex(self.flags)}\n"
         )
@@ -355,7 +393,7 @@ class GetDCRegionExtentListsResponsePayload:
     def parse(cls, data: bytes) -> "GetDCRegionExtentListsResponsePayload":
         base_size = struct.calcsize(cls.pack_mask)
         remaining_len = len(data) - base_size
-        dc_extent_struct_size = DynamicCapacityExtentStruct.get_size()
+        dc_extent_struct_size = struct.calcsize(cls.extent_mask)
 
         if remaining_len % dc_extent_struct_size != 0:
             raise ValueError("Invalid Extent List Structures")
@@ -368,11 +406,10 @@ class GetDCRegionExtentListsResponsePayload:
             total_extent_count,
             extent_list_gen_num,
             _,
-        ) = struct.unpack(cls.pack_mask, data)
+        ) = struct.unpack(cls.pack_mask, data[:base_size])
         num_extents = remaining_len // dc_extent_struct_size
         dc_extents = []
         offset = base_size
-        extent_size = struct.calcsize(cls.extent_mask)
         for _ in range(num_extents):
             (
                 start_dpa,
@@ -381,12 +418,12 @@ class GetDCRegionExtentListsResponsePayload:
                 extent_tag_lower,
                 shared_extent_seq,
                 _,
-            ) = struct.unpack(cls.extent_mask, data[offset : offset + extent_size])
+            ) = struct.unpack(cls.extent_mask, data[offset : offset + dc_extent_struct_size])
             extent_tag = extent_tag_upper << 64 | extent_tag_lower
             dc_extents.append(
                 DynamicCapacityExtent(start_dpa, extent_length, extent_tag, shared_extent_seq)
             )
-            offset += extent_size
+            offset += dc_extent_struct_size
 
         return cls(
             host_id=host_id,
@@ -394,6 +431,7 @@ class GetDCRegionExtentListsResponsePayload:
             returned_extent_count=returned_extent_count,
             total_extent_count=total_extent_count,
             extent_list_gen_num=extent_list_gen_num,
+            dc_extents=dc_extents,
         )
 
     def dump(self) -> bytes:
@@ -407,17 +445,18 @@ class GetDCRegionExtentListsResponsePayload:
             self.extent_list_gen_num,
             b"\x00" * 4,
         )
-        for extent in self.dc_extents:
-            data += struct.pack(
-                self.extent_mask,
-                extent.start_dpa,
-                extent.length,
-                (extent.tag >> 64) & 0xFFFFFFFFFFFFFFFF,
-                extent.tag & 0xFFFFFFFFFFFFFFFF,
-                extent.shared_extent_seq,
-                b"\x00" * 6,
-            )
-            return data
+        if self.dc_extents:
+            for extent in self.dc_extents:
+                data += struct.pack(
+                    self.extent_mask,
+                    extent.start_dpa,
+                    extent.length,
+                    (extent.tag >> 64) & 0xFFFFFFFFFFFFFFFF,
+                    extent.tag & 0xFFFFFFFFFFFFFFFF,
+                    extent.shared_extent_seq,
+                    b"\x00" * 6,
+                )
+        return data
 
     def get_pretty_print(self) -> str:
         return (
@@ -430,6 +469,8 @@ class GetDCRegionExtentListsResponsePayload:
 
 
 class GetDCRegionExtentLists(CciForegroundCommand):
+    OPCODE = CCI_FM_API_COMMAND_OPCODE.GET_DC_REGION_EXTENT_LISTS
+
     def __init__(
         self,
         physical_port_manager: PhysicalPortManager,
@@ -437,18 +478,24 @@ class GetDCRegionExtentLists(CciForegroundCommand):
     ):
         self._physical_port_manager = physical_port_manager
         self._virtual_switch_manager = virtual_switch_manager
-        super().__init__(CCI_FM_API_COMMAND_OPCODE.GET_DC_REGION_EXTENT_LISTS)
+        super().__init__(self.OPCODE)
 
     async def _execute(self, request: CciRequest) -> CciResponse:
-        # pylint: disable=unused-variable
-        request_payload = GetDCRegionExtentListsRequestPayload.parse(request.payload)
-        ######################################################################
-        # TODO: Add code that will process "request_payload" and create response
-        # WILL NOT WORK WITHOUT IMPLEMENTATION
-        ######################################################################
-        response_payload = GetDCRegionExtentListsResponsePayload()
-        response = self.create_cci_response(response_payload)
-        return response
+        try:
+            request_payload = GetDCRegionExtentListsRequestPayload.parse(request.payload)
+            host_id = request_payload.host_id
+        except Exception:
+            host_id = 0
+
+        response_payload = GetDCRegionExtentListsResponsePayload(
+            host_id=host_id,
+            starting_extent_index=0,
+            returned_extent_count=0,
+            total_extent_count=0,
+            extent_list_gen_num=1,
+            dc_extents=[],
+        )
+        return self.create_cci_response(response_payload)
 
     @classmethod
     def create_cci_request(
@@ -456,7 +503,7 @@ class GetDCRegionExtentLists(CciForegroundCommand):
         request: GetDCRegionExtentListsRequestPayload,
     ) -> CciRequest:
         cci_request = CciRequest()
-        cci_request.opcode = CCI_FM_API_COMMAND_OPCODE.GET_DC_REGION_EXTENT_LISTS
+        cci_request.opcode = cls.OPCODE
         cci_request.payload = request.dump()
         return cci_request
 

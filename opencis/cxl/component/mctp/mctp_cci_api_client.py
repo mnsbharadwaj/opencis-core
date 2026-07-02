@@ -86,6 +86,24 @@ from opencis.cxl.cci.fabric_manager.gae import (
     FabricCrawlOutCommand,
     FabricCrawlOutResponsePayload,
 )
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    GetDcdInfoCommand,
+    GetDcdInfoRequestPayload,
+    GetDcdInfoResponsePayload,
+    GetHostDCRegionConfigRequestPayload,
+    GetHostDCRegionConfigResponsePayload,
+    GetHostDCRegionConfiguration,
+    SetDCRegionConfigRequestPayload,
+    SetDCRegionConfigResponsePayload,
+    SetDCRegionConfiguration,
+    GetDCRegionExtentListsRequestPayload,
+    GetDCRegionExtentListsResponsePayload,
+    GetDCRegionExtentLists,
+    InitiateDynamicCapacityAddRequestPayload,
+    InitiateDynamicCapacityAdd,
+    InitiateDynamicCapacityReleaseRequestPayload,
+    InitiateDynamicCapacityRelease,
+)
 from opencis.cxl.cci.common import CCI_RETURN_CODE
 from opencis.cxl.component.cci_executor import CciRequest
 from opencis.util.component import RunnableComponent
@@ -671,6 +689,88 @@ class MctpCciApiClient(RunnableComponent):
         """Generate AER Event (Opcode 5203h)."""
         response_message_packet = await self._send_cci_command(
             lambda: GenerateAerEventCommand.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def get_dcd_info(
+        self, request: GetDcdInfoRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetDcdInfoResponsePayload]]:
+        """Get DCD Info (Opcode 5600h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: GetDcdInfoCommand.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetDcdInfoCommand.parse_response_payload(
+            response_message_packet.get_payload()
+        )
+        return (return_code, response)
+
+    async def get_host_dc_region_config(
+        self, request: GetHostDCRegionConfigRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetHostDCRegionConfigResponsePayload]]:
+        """Get Host DC Region Configuration (Opcode 5601h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: GetHostDCRegionConfiguration.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetHostDCRegionConfiguration.create_cci_response(
+            response_message_packet.get_payload()
+        )
+        # Parse the response payload from the packet
+        response = GetHostDCRegionConfigResponsePayload.parse(response_message_packet.get_payload())
+        return (return_code, response)
+
+    async def set_dc_region_config(
+        self, request: SetDCRegionConfigRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[SetDCRegionConfigResponsePayload]]:
+        """Set DC Region Configuration (Opcode 5602h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: SetDCRegionConfiguration.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = SetDCRegionConfigResponsePayload.parse(response_message_packet.get_payload())
+        return (return_code, response)
+
+    async def get_dc_region_extent_lists(
+        self, request: GetDCRegionExtentListsRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[GetDCRegionExtentListsResponsePayload]]:
+        """Get DC Region Extent Lists (Opcode 5603h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: GetDCRegionExtentLists.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        response = GetDCRegionExtentListsResponsePayload.parse(response_message_packet.get_payload())
+        return (return_code, response)
+
+    async def initiate_dynamic_capacity_add(
+        self, request: InitiateDynamicCapacityAddRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Initiate Dynamic Capacity Add (Opcode 5604h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: InitiateDynamicCapacityAdd.create_cci_request(request)
+        )
+        return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
+        if return_code != CCI_RETURN_CODE.SUCCESS:
+            return (return_code, None)
+        return (return_code, return_code)
+
+    async def initiate_dynamic_capacity_release(
+        self, request: InitiateDynamicCapacityReleaseRequestPayload
+    ) -> Tuple[CCI_RETURN_CODE, Optional[CCI_RETURN_CODE]]:
+        """Initiate Dynamic Capacity Release (Opcode 5605h)."""
+        response_message_packet = await self._send_cci_command(
+            lambda: InitiateDynamicCapacityRelease.create_cci_request(request)
         )
         return_code = CCI_RETURN_CODE(response_message_packet.cci_msg_header.return_code)
         if return_code != CCI_RETURN_CODE.SUCCESS:

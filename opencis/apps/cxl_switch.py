@@ -78,6 +78,13 @@ from opencis.cxl.cci.fabric_manager.gae import (
     GetProxyThreadStatusCommand,
     CancelProxyThreadCommand,
 )
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    GetDcdInfoCommand,
+    GetHostDCRegionConfiguration,
+    SetDCRegionConfiguration,
+    GetDCRegionExtentLists,
+    InitiateDynamicCapacityAdd,
+    InitiateDynamicCapacityRelease,
 from opencis.cxl.component.gae_manager import GaeManager
 from opencis.cxl.component.pbr_switch_manager import PbrSwitchManager
 from opencis.cxl.component.pbr_switch_router import PbrSwitchRouter
@@ -234,6 +241,12 @@ class CxlSwitch(RunnableComponent):
             SendPpbCxlIoConfigurationRequestCommand(self._physical_port_manager),
             GenerateAerEventCommand(self._virtual_switch_manager),
             TunnelManagementCommand(self._physical_port_manager, self._virtual_switch_manager),
+            GetDcdInfoCommand(self._physical_port_manager, self._virtual_switch_manager, self._device_configs),
+            GetHostDCRegionConfiguration(self._physical_port_manager, self._virtual_switch_manager, self._device_configs),
+            SetDCRegionConfiguration(self._physical_port_manager, self._virtual_switch_manager),
+            GetDCRegionExtentLists(self._physical_port_manager, self._virtual_switch_manager),
+            InitiateDynamicCapacityAdd(self._physical_port_manager, self._virtual_switch_manager),
+            InitiateDynamicCapacityRelease(self._physical_port_manager, self._virtual_switch_manager),
         ]
         # Register PBR + GAE commands only if the switch is in PBR mode
         if self._enable_pbr and self._pbr_switch_manager:

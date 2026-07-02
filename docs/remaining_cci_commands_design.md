@@ -1,97 +1,159 @@
-# Design Document: Remaining CXL FM API CCI Commands
+# Design Document: CXL Switch, MLD, & DCD CCI Commands
 
-This document details the design, design decisions, and implementation strategies for the remaining 12 CXL Fabric Manager (FM) API CCI commands (Table 7-17) on both the **OpenCIS Simple Device (Simulator)** and **QEMU Device Emulation**.
-
----
-
-## 1. MLD Info & Allocations (Group 54h)
-
-### 1.1 Get LD Info (0x5400)
-* **Design Overview**: Retrieves configuration info of a Multi-Logical Device (MLD) including total logical devices (LDs), active mappings, and supported ranges.
-* **Design Decision**: Query the switch's `VirtualSwitchManager` and connected port bindings to return the exact counts, rather than leaving it unimplemented.
-* **Simple Device (OpenCIS) Implementation**:
-  - The switch command parser reads `request.payload` to extract `port_id`.
-  - Queries `VirtualSwitchManager.get_virtual_switch(vcs_id)` to count bound upstream/downstream ports.
-  - Returns a struct containing `num_lds` and standard division of DPA bounds.
-* **QEMU Device Emulation (Future)**:
-  - In QEMU, the MLD device exposes this register block via its PCIe capability structure. 
-  - QEMU will parse the back-end host memory directories and query the guest kernel's resource allocation trees to return actual logical partitions.
-
-### 1.2 Get LD Allocations (0x5401)
-* **Design Overview**: Returns the memory ranges (DPA ranges) allocated to specific LDs.
-* **Design Decision**: Maintain an in-memory LD allocation table within the switch component.
-* **Simple Device (OpenCIS) Implementation**:
-  - Command executes by reading the `allocated_ld` map stored in the `CxlVirtualSwitch` class.
-  - Returns starting DPA and length of volatile/persistent memory allocated to the requested LD.
-* **QEMU Device Emulation (Future)**:
-  - Mapped directly to the guest’s physical address mappings. QEMU will read the backend shared file offsets representing logical capacity chunks.
+This document provides a comprehensive design reference for the CXL Switch, MLD, and DCD Fabric Manager (FM) API CCI commands. It highlights the distinction between the **OpenCIS Simulation-Only path** and the **QEMU Hardware Emulation path**, complete with detailed code flow diagrams for each command category.
 
 ---
 
-## 2. QoS Control, Status, & Bandwidth (Group 54h)
+## 1. Scope & System Architecture
 
-### 2.1 Get QoS Control (0x5403) & Set QoS Control (0x5404)
-* **Design Overview**: Reads and writes throttling policies and back-pressure controls.
-* **Design Decision**: Emulate standard status registers and log Set operations without active scheduling.
-* **Simple Device (OpenCIS) Implementation**:
-  - `Get QoS Control` returns `QoS_Throttling_Supported = 0` (standard fallback).
-  - `Set QoS Control` accepts parameters and returns `SUCCESS`.
-* **QEMU Device Emulation (Future)**:
-  - QEMU will intercept Set commands and configure cgroups or block I/O throttle limits on the host backing device.
+The scope of this implementation is to support standard CXL Switch, MLD, and DCD commands (opcode range `5100h` to `5605h` + Generic status commands). PBR Switch commands (`57xxh`) and GAE/GFA commands (`58xxh`) are out of scope.
 
-### 2.2 Get QoS Status (0x5405)
-* **Design Overview**: Returns traffic telemetry (throttling triggers, back-pressure latency).
-* **Design Decision**: Return default all-zero metrics indicating nominal operating conditions.
-* **Simple Device (OpenCIS) Implementation**:
-  - Instantiates a telemetry payload with standard active counts set to 0.
-* **QEMU Device Emulation (Future)**:
-  - QEMU will read live host stats (`io.stat` or custom hypervisor counters) and report them via virtualized MMIO.
-
-### 2.3 Get QoS Allocated Bandwidth (0x5406) & Set QoS Allocated Bandwidth (0x5407)
-* **Design Overview**: Manages bandwidth allocation caps per logical head/LD.
-* **Design Decision**: Store bandwidth allocations in a local memory table and respond with success.
-* **Simple Device (OpenCIS) Implementation**:
-  - The switch command maintains a `dict` mapping `ld_id -> bandwidth_limit`. 
-  - Get reads from the dict; Set updates the dict and returns `SUCCESS`.
-* **QEMU Device Emulation (Future)**:
-  - QEMU will map these allocations to virtio-net or block I/O rate limits to throttle host bus speeds.
-
-### 2.4 Get QoS Bandwidth Limit (0x5408) & Set QoS Bandwidth Limit (0x5409)
-* **Design Overview**: Reads and writes maximum limit thresholds.
-* **Design Decision**: Store limits in switch state and respond with success.
-* **Simple Device (OpenCIS) Implementation**:
-  - Maintains `max_bandwidth_limit` in the `PhysicalPortManager` registers.
-* **QEMU Device Emulation (Future)**:
-  - QEMU uses host system network/bus controllers to actively throttle memory bus frequencies.
+### Code Flow Overview
+```
+       [Fabric Manager CLI / MCTP Client]
+                       │
+                       ▼ (CCI Request Packet)
+              [FmMctpCciServer]
+                       │
+                       ▼ (Raw Payload Packet)
+             [MctpCciApiClient]
+                       │
+                       ▼ (TCP / Port 8300)
+              [MctpCciExecutor]
+                       │
+                       ▼ (Resolve Opcode)
+         [Switch CCI Command Executor] 
+           /           │           \
+          ▼            ▼            ▼
+   [Physical Switch] [Virtual Switch] [DCD / MLD State]
+```
 
 ---
 
-## 3. Multi-Headed Device (MHD) Management (Group 55h)
-
-### 3.1 Get Multi-Headed Info (0x5500)
-* **Design Overview**: Returns head configuration and ownership/arbitration state.
-* **Design Decision**: Return a single-head topology by default.
-* **Simple Device (OpenCIS) Implementation**:
-  - Returns `num_heads = 1` and marks head 0 as active/owned.
-* **QEMU Device Emulation (Future)**:
-  - In a multi-VM setup, QEMU will coordinate ownership via a shared daemon (e.g. using socket communications or a central cluster manager) to dynamically arbitrate head access.
+## 2. Command Reference & Code Flows
 
 ---
 
-## 4. LD-Specific Commands (Group 53h)
+### 2.1 Physical Switch Commands (Group 51h)
 
-### 4.1 Send LD CXL.io Configuration Request (0x5301)
-* **Design Overview**: Relays configuration reads/writes to a specific LD within an MLD.
-* **Design Decision**: Forward payload via the downstream port connection's `cci_fifo` using LD tags.
-* **Simple Device (OpenCIS) Implementation**:
-  - The switch resolves the physical port, wraps the payload in a `CciMessagePacket` with the target `ld_id`, and sends it downstream over `cci_fifo`.
-* **QEMU Device Emulation (Future)**:
-  - QEMU intercepts the write and routes it to the specific virtio/vhost endpoint context representing the requested LD.
+#### 2.1.1 Identify Switch Device (0x5100) & Get Physical Port State (0x5101)
+* **Simulation Flow (OpenCIS)**: Directly queries active port configurations inside the switch's `PhysicalPortManager` and returns connection metrics.
+* **QEMU Emulation Flow**: Reads registers exposed by QEMU's PCI device representation (`PCIDevice` state).
+* **Code Flow**:
+```
+FM ──► GetPhysicalPortState(port_id) ──► PhysicalPortManager ──► Retrieve Port State ──► FM (SUCCESS)
+```
 
-### 4.2 Send LD CXL.io Memory Request (0x5302)
-* **Design Overview**: Forwards memory accesses directly to the target LD.
-* **Design Decision**: Emulate by reading/writing to the simulated memdev file mapping offset by `ld_id`.
-* **Simple Device (OpenCIS) Implementation**:
-  - Intercepts the request and issues reads/writes to the `memory_file` at the offset corresponding to `ld_id * ld_size`.
-* **QEMU Device Emulation (Future)**:
-  - QEMU executes memory translations targeting the logical partition's host file descriptor.
+#### 2.1.2 Physical Port Control (0x5102)
+* **Simulation Flow (OpenCIS)**: Performs a logical reset or assertion/deassertion of PERST in memory (e.g. setting `port.enabled = False`).
+* **QEMU Emulation Flow**: Triggers an actual virtual system reset signal (e.g. `pci_device_reset()`) to reinitialize the backing virtual device.
+* **Code Flow**:
+```
+FM ──► PhysicalPortControl(ASSERT_PERST) ──► PhysicalPortManager ──► Set port.enabled = False ──► FM (SUCCESS)
+```
+
+#### 2.1.3 Send PPB CXL.io Configuration Request (0x5103)
+* **Simulation Flow (OpenCIS)**: Reads/writes directly to the in-memory config register arrays of the `PpbDevice` mapped to the target port.
+* **QEMU Emulation Flow**: Passes PCIe config-space reads/writes directly to QEMU's PCI bus structures (`pci_default_read_config` / `pci_default_write_config`).
+* **Code Flow**:
+```
+FM ──► SendPpbCxlIoConfig(Read Reg 0) ──► PhysicalPortManager ──► PpbDevice.read_bytes() ──► FM (SUCCESS + Data)
+```
+
+---
+
+### 2.2 Virtual Switch Commands (Group 52h)
+
+#### 2.2.1 Get Virtual CXL Switch Info (0x5200), Bind vPPB (0x5201), & Unbind vPPB (0x5202)
+* **Simulation Flow (OpenCIS)**: Updates the binding maps inside `VirtualSwitchManager` and notifies the routing loop to dynamically link/unlink packet queues.
+* **QEMU Emulation Flow**: Modifies PCI hot-plug bindings dynamically. Binding triggers QEMU virtual bus hot-plug events (`qdev_device_add`).
+* **Code Flow**:
+```
+FM ──► BindVppb(vPPB_1, Port_2) ──► VirtualSwitchManager ──► Update Bind Maps ──► Update Queue Links ──► FM
+```
+
+#### 2.2.2 Generate AER Event (0x5203)
+* **Simulation Flow (OpenCIS)**: Log-only/simulated event. Emulates event generation by asserting the IRQ line associated with the target vPPB.
+* **QEMU Emulation Flow**: Writes to QEMU's virtual device AER registers (`pcie_aer_write_config`) and raises an actual MSI-X interrupt to the guest OS.
+* **Code Flow**:
+```
+FM ──► GenerateAerEvent(VCS0, vPPB1, FATAL) ──► VirtualSwitchManager ──► Trigger IRQ line ──► FM (SUCCESS)
+```
+
+#### 2.2.3 Freeze vPPB (0x5215) & Unfreeze vPPB (0x5216)
+* **Simulation Flow (OpenCIS)**: Toggles a logical traffic gate inside `VirtualSwitch` to stop forwarding incoming CXL packets.
+* **QEMU Emulation Flow**: Pauses or queues backing memory mapping ring-buffer requests.
+* **Code Flow**:
+```
+FM ──► FreezeVppb(vPPB_1) ──► VirtualSwitch ──► Set traffic_gate = FROZEN ──► FM (SUCCESS)
+```
+
+---
+
+### 2.3 Tunneling & MLD Info (Group 53h & 54h)
+
+#### 2.3.1 Tunnel Management Command (0x5300)
+* **Simulation Flow (OpenCIS)**: Fetches the connected device connection queue and puts the packet payload directly on `cci_fifo.host_to_target`.
+* **QEMU Emulation Flow**: Routes the MCTP packet to the target virtual PCIe endpoint's physical mailbox interface.
+* **Code Flow**:
+```
+FM ──► TunnelMgmtCmd(Port_1, Payload) ──► Switch ──► port_connection.cci_fifo ──► Endpoint (Process)
+                                                                                     │
+FM ◄── Return Tunnel Payload ◄── Switch ◄── cci_fifo.target_to_host ◄────────────────┘
+```
+
+#### 2.3.2 Send LD CXL.io Config (0x5301) & Send LD CXL.io Memory (0x5302)
+* **Simulation Flow (OpenCIS)**: Forwards the config/memory packet to the downstream connection's queue after appending the target `ld_id` tag.
+* **QEMU Emulation Flow**: Uses IOMMU context mapping or specific PCIe requester IDs (RIDs) to isolate the target LD within virtualized host spaces.
+* **Code Flow**:
+```
+FM ──► SendLdConfig(ld_id=2, data) ──► Switch ──► Wrap with LD ID ──► target_connection.cfg_fifo ──► Device
+```
+
+#### 2.3.3 Get LD Info (0x5400) & Get LD Allocations (0x5401)
+* **Simulation Flow (OpenCIS)**: Reads logical division limits (e.g. partition offsets) and active mappings directly from `VirtualSwitchManager`.
+* **QEMU Emulation Flow**: Queries host system namespaces representing disk or virtual memory block mounts.
+* **Code Flow**:
+```
+FM ──► GetLdAllocations(LD_0) ──► Switch ──► Query VirtualSwitchManager ──► Return DPA Base/Length ──► FM
+```
+
+---
+
+### 2.4 QoS Control & Bandwidth (Group 54h)
+
+#### 2.4.1 Get/Set QoS Control (0x5403, 0x5404), Get QoS Status (0x5405), Get/Set Bandwidth Limits (0x5406–0x5409)
+* **Simulation Flow (OpenCIS)**: **Simulation-Only**. The switch maintains an in-memory database of bandwidth caps and throttling status fields. Commands read/write from this map and return `SUCCESS`. No active scheduling or hardware throttling is performed.
+* **QEMU Emulation Flow**: Intercepts QoS settings and configures system cgroups (`io.weight`/`io.max`) or block I/O throttle limits on the host backing devices to restrict actual IOPS/bandwidth.
+* **Code Flow**:
+```
+FM ──► SetQosAllocatedBandwidth(LD_1, 500MB/s) ──► Switch ──► Update qos_limits[LD_1] = 500 ──► FM (SUCCESS)
+```
+
+---
+
+### 2.5 DCD Management (Group 56h)
+
+#### 2.5.1 Get DCD Info (0x5600) & Get Host DC Region Configuration (0x5601)
+* **Simulation Flow (OpenCIS)**: Maps regions by querying the memory capacity bounds declared in the switch's `device_configs` for the active port.
+* **QEMU Emulation Flow**: Reads dynamic capacity configuration structures declared in the backing device backend parameters (`-device cxl-type3,dc-regions=...`).
+* **Code Flow**:
+```
+FM ──► GetDcdInfo(port_id=1) ──► Switch ──► Lookup device_configs[port_id] ──► Return Region Configs ──► FM
+```
+
+#### 2.5.2 Set DC Region Configuration (0x5602) & Get DC Region Extent Lists (0x5603)
+* **Simulation Flow (OpenCIS)**: Returns default, spec-compliant empty/initialized lists from memory.
+* **QEMU Emulation Flow**: Modifies active memory mappings dynamically via host virtual memory subsystems.
+* **Code Flow**:
+```
+FM ──► GetExtentLists(Region_0) ──► Switch ──► Read local extent list ──► FM (SUCCESS + Extents)
+```
+
+#### 2.5.3 Initiate Dynamic Capacity Add (0x5604) & Initiate Dynamic Capacity Release (0x5605)
+* **Simulation Flow (OpenCIS)**: **Simulation-Only**. Accepts the target allocation parameters (DPA range, Tag, Shared Sequence), verifies syntax, logs the action, and returns `SUCCESS` immediately to emulate complete control plane handshakes.
+* **QEMU Emulation Flow**: Communicates with the VM kernel's memory-balloon driver or dev-dax driver to dynamically allocate/release backing host physical memory pages to the guest's kernel space.
+* **Code Flow**:
+```
+FM ──► InitiateDcAdd(DPA=0x0, Len=256MB) ──► Switch ──► Log Event ──► Return SUCCESS ──► FM (Handshake Ok)
+```

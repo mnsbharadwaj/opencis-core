@@ -19,35 +19,33 @@ from opencis.util.logger import logger
 
 
 @dataclass
-class SendPpbCxlIoConfigurationRequestPayload:
+class SendLdCxlIoConfigurationRequestPayload:
     ppb_id: int
     register_num: int
     ext_register_num: int
     first_dword_byte_enable: int
     transaction_type: int  # 0: Read, 1: Write
+    ld_id: int
     transaction_data: int = 0
 
     @classmethod
     def parse(cls, data: bytes):
-        if len(data) < 4:
-            raise ValueError("Data too short to parse SendPpbCxlIoConfigurationRequestPayload")
+        if len(data) < 8:
+            raise ValueError("Data too short to parse SendLdCxlIoConfigurationRequestPayload")
         
         ppb_id = data[0]
-        # Bytes 1-3 contain register and transaction metadata:
-        # Bits[7:0]: Register Number
-        # Bits[11:8]: Extended Register Number
-        # Bits[15:12]: First Dword Byte Enable
-        # Bits[22:16]: Reserved
-        # Bit[23]: Transaction Type (0: Read, 1: Write)
         fields = int.from_bytes(data[1:4], "little")
         register_num = fields & 0xFF
         ext_register_num = (fields >> 8) & 0xF
         first_dword_byte_enable = (fields >> 12) & 0xF
         transaction_type = (fields >> 23) & 1
 
+        ld_id = unpack("<H", data[4:6])[0]
+        # bytes 6-7 are reserved
+
         transaction_data = 0
-        if transaction_type == 1 and len(data) >= 8:
-            transaction_data = int.from_bytes(data[4:8], "little")
+        if transaction_type == 1 and len(data) >= 12:
+            transaction_data = int.from_bytes(data[8:12], "little")
 
         return cls(
             ppb_id=ppb_id,
@@ -55,11 +53,12 @@ class SendPpbCxlIoConfigurationRequestPayload:
             ext_register_num=ext_register_num,
             first_dword_byte_enable=first_dword_byte_enable,
             transaction_type=transaction_type,
+            ld_id=ld_id,
             transaction_data=transaction_data,
         )
 
     def dump(self) -> bytes:
-        data = bytearray(8)
+        data = bytearray(12)
         data[0] = self.ppb_id
         fields = (
             (self.register_num & 0xFF)
@@ -68,13 +67,14 @@ class SendPpbCxlIoConfigurationRequestPayload:
             | ((self.transaction_type & 1) << 23)
         )
         data[1:4] = fields.to_bytes(3, "little")
+        data[4:6] = pack("<H", self.ld_id)
         if self.transaction_type == 1:
-            data[4:8] = self.transaction_data.to_bytes(4, "little")
+            data[8:12] = self.transaction_data.to_bytes(4, "little")
         return bytes(data)
 
 
 @dataclass
-class SendPpbCxlIoConfigurationResponsePayload:
+class SendLdCxlIoConfigurationResponsePayload:
     return_data: int = 0
 
     def dump(self) -> bytes:
@@ -83,12 +83,12 @@ class SendPpbCxlIoConfigurationResponsePayload:
     @classmethod
     def parse(cls, data: bytes):
         if len(data) < 4:
-            raise ValueError("Data too short to parse SendPpbCxlIoConfigurationResponsePayload")
+            raise ValueError("Data too short to parse SendLdCxlIoConfigurationResponsePayload")
         return cls(int.from_bytes(data[:4], "little"))
 
 
-class SendPpbCxlIoConfigurationRequestCommand(CciForegroundCommand):
-    OPCODE = CCI_FM_API_COMMAND_OPCODE.SEND_PPB_CXL_IO_CONFIGURATION_REQUEST
+class SendLdCxlIoConfigurationRequestCommand(CciForegroundCommand):
+    OPCODE = CCI_FM_API_COMMAND_OPCODE.SEND_LD_CXL_IO_CONFIGURATION_REQUEST
 
     def __init__(self, physical_port_manager: PhysicalPortManager):
         super().__init__(self.OPCODE)
@@ -106,7 +106,7 @@ class SendPpbCxlIoConfigurationRequestCommand(CciForegroundCommand):
         # Check port boundaries
         port_count = self._physical_port_manager.get_port_counts()
         if port_id >= port_count:
-            logger.error(self._create_message(f"PPB ID {port_id} is out of bounds"))
+            logger.error(self._create_message(f"Port ID {port_id} is out of bounds"))
             return CciResponse(return_code=CCI_RETURN_CODE.INVALID_INPUT)
 
         tx_type = "Write" if request_payload.transaction_type == 1 else "Read"
@@ -114,26 +114,26 @@ class SendPpbCxlIoConfigurationRequestCommand(CciForegroundCommand):
 
         logger.info(
             self._create_message(
-                f"Simulating PPB Config {tx_type} on PPB {port_id}, Register: {reg_addr:#05x}, "
-                f"ByteEnable: {request_payload.first_dword_byte_enable:#x}, "
+                f"Simulating LD Config {tx_type} on Port {port_id}, LD {request_payload.ld_id}, "
+                f"Register: {reg_addr:#05x}, ByteEnable: {request_payload.first_dword_byte_enable:#x}, "
                 f"Data: {request_payload.transaction_data:#010x}"
             )
         )
 
-        response_payload = SendPpbCxlIoConfigurationResponsePayload(return_data=0)
+        response_payload = SendLdCxlIoConfigurationResponsePayload(return_data=0)
         return CciResponse(return_code=CCI_RETURN_CODE.SUCCESS, payload=response_payload.dump())
 
     @classmethod
-    def create_cci_request(cls, request: SendPpbCxlIoConfigurationRequestPayload) -> CciRequest:
+    def create_cci_request(cls, request: SendLdCxlIoConfigurationRequestPayload) -> CciRequest:
         cci_request = CciRequest()
         cci_request.opcode = cls.OPCODE
         cci_request.payload = request.dump()
         return cci_request
 
     @staticmethod
-    def parse_request_payload(payload: bytes) -> SendPpbCxlIoConfigurationRequestPayload:
-        return SendPpbCxlIoConfigurationRequestPayload.parse(payload)
+    def parse_request_payload(payload: bytes) -> SendLdCxlIoConfigurationRequestPayload:
+        return SendLdCxlIoConfigurationRequestPayload.parse(payload)
 
     @staticmethod
-    def parse_response_payload(payload: bytes) -> SendPpbCxlIoConfigurationResponsePayload:
-        return SendPpbCxlIoConfigurationResponsePayload.parse(payload)
+    def parse_response_payload(payload: bytes) -> SendLdCxlIoConfigurationResponsePayload:
+        return SendLdCxlIoConfigurationResponsePayload.parse(payload)

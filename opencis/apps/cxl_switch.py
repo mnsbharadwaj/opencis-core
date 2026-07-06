@@ -41,10 +41,23 @@ from opencis.cxl.cci.generic.information_and_status import (
 )
 from opencis.cxl.cci.fabric_manager.mld_components import (
     SetLdAllocationsCommand,
+    GetQosControlCommand,
+    SetQosControlCommand,
+    GetQosStatusCommand,
+    GetQosAllocatedBwCommand,
+    SetQosAllocatedBwCommand,
+    GetQosBwLimitCommand,
+    SetQosBwLimitCommand,
 )
 from opencis.cxl.cci.fabric_manager.physical_switch import (
     IdentifySwitchDeviceCommand,
     GetPhysicalPortStateCommand,
+    PhysicalPortControlCommand,
+    SendPpbCxlIoConfigurationRequestCommand,
+    GetDomainValidationSvStateCommand,
+    SetDomainValidationSvCommand,
+    GetVcsDomainValidationSvStateCommand,
+    GetDomainValidationSvCommand,
 )
 from opencis.cxl.cci.fabric_manager.virtual_switch import (
     GetVirtualCxlSwitchInfoCommand,
@@ -52,6 +65,21 @@ from opencis.cxl.cci.fabric_manager.virtual_switch import (
     UnbindVppbCommand,
     FreezeVppbCommand,
     UnfreezeVppbCommand,
+    GenerateAerEventCommand,
+)
+from opencis.cxl.cci.fabric_manager.mld_port import (
+    SendLdCxlIoConfigurationRequestCommand,
+    SendLdCxlIoMemoryRequestCommand,
+)
+from opencis.cxl.cci.fabric_manager.multi_headed_devices import (
+    GetMultiHeadedInfoCommand,
+    GetHeadInfoCommand,
+)
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    GetDcRegionExtentListsCommand,
+    DynamicCapacityAddReferenceCommand,
+    DynamicCapacityRemoveReferenceCommand,
+    DynamicCapacityListTagsCommand,
 )
 from opencis.cxl.cci.vendor_specfic import (
     NotifySwitchUpdateRequestPayload,
@@ -226,6 +254,34 @@ class CxlSwitch(RunnableComponent):
             FreezeVppbCommand(self._virtual_switch_manager),
             UnfreezeVppbCommand(self._virtual_switch_manager),
             SetLdAllocationsCommand(self._virtual_switch_manager),
+            # Physical Switch Commands
+            PhysicalPortControlCommand(self._physical_port_manager),
+            SendPpbCxlIoConfigurationRequestCommand(self._physical_port_manager),
+            GetDomainValidationSvStateCommand(self._virtual_switch_manager),
+            SetDomainValidationSvCommand(self._virtual_switch_manager),
+            GetVcsDomainValidationSvStateCommand(self._virtual_switch_manager),
+            GetDomainValidationSvCommand(self._virtual_switch_manager),
+            # Virtual Switch Commands
+            GenerateAerEventCommand(self._virtual_switch_manager),
+            # MLD Port Commands
+            SendLdCxlIoConfigurationRequestCommand(self._physical_port_manager),
+            SendLdCxlIoMemoryRequestCommand(self._physical_port_manager),
+            # MLD Component (QoS) Commands
+            GetQosControlCommand(self._virtual_switch_manager),
+            SetQosControlCommand(self._virtual_switch_manager),
+            GetQosStatusCommand(self._virtual_switch_manager),
+            GetQosAllocatedBwCommand(self._virtual_switch_manager),
+            SetQosAllocatedBwCommand(self._virtual_switch_manager),
+            GetQosBwLimitCommand(self._virtual_switch_manager),
+            SetQosBwLimitCommand(self._virtual_switch_manager),
+            # Multi-Headed Device Commands
+            GetMultiHeadedInfoCommand(self._physical_port_manager),
+            GetHeadInfoCommand(self._physical_port_manager),
+            # DCD Management Commands
+            GetDcRegionExtentListsCommand(self._physical_port_manager),
+            DynamicCapacityAddReferenceCommand(self._physical_port_manager),
+            DynamicCapacityRemoveReferenceCommand(self._physical_port_manager),
+            DynamicCapacityListTagsCommand(self._physical_port_manager),
         ]
         # Register PBR + GAE commands only if the switch is in PBR mode
         if self._enable_pbr and self._pbr_switch_manager:

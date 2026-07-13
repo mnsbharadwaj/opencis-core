@@ -6,12 +6,12 @@ This document provides a detailed breakdown of the 36 CXL Fabric Manager (FM) AP
 
 ## 1. Summary of Command Classifications
 
-* **Fully Functional Commands**: **9 commands** (Directly integrated with the OpenCIS virtual switch state machines, resource managers, or live allocation maps).
-* **Simulated/Mocked/Stubbed Commands**: **27 commands** (Parse and validate specifications correctly, but execute mock behaviors, operate on stubbed placeholder structures, or log tracing events because the underlying physical/hardware actions are not modeled in CPU emulation).
+* **Fully Functional Commands**: **7 commands** (Directly integrated with the OpenCIS virtual switch state machines, resource managers, or live allocation maps).
+* **Simulated/Mocked/Stubbed Commands**: **29 commands** (Parse and validate specifications correctly, but execute mock behaviors, operate on stubbed placeholder structures, or log tracing events because the underlying physical/hardware actions are not modeled in CPU emulation).
 
 ---
 
-## 2. Group A: Fully Functional Commands (9 Commands)
+## 2. Group A: Fully Functional Commands (7 Commands)
 
 These commands interact directly with active manager objects in OpenCIS (`PhysicalPortManager`, `VirtualSwitchManager`, `MldManager`) to query or modify live emulated states:
 
@@ -23,13 +23,11 @@ These commands interact directly with active manager objects in OpenCIS (`Physic
 | **0x5201** | **Bind vPPB** | Triggers binding handler in the Switch connection client. | Actually binds a physical port/LD to a virtual downstream port. |
 | **0x5202** | **Unbind vPPB** | Clears routing tables and disconnects endpoints. | Unbinds port/LD and clears active routing maps. |
 | **0x5300** | **Tunnel Management** | Unpacks and encapsulates CCI packets. | Actually tunnels Fabric Manager packets to the target LD executor. |
-| **0x5400** | **Get LD Info** | Queries `MldManager` limits. | Returns the actual total capacity and maximum logical device count configured. |
-| **0x5401** | **Get LD Allocations** | Reads memory profiles. | Returns base addresses and lengths allocated to active LDs. |
-| **0x5402** | **Set LD Allocations** | Updates live allocations in `MldManager`. | Dynamically re-dimensions logical device memory ranges. |
+| **0x5402** | **Set LD Allocations** | Updates live allocations in `MldManager` or `VirtualSwitch`. | Dynamically re-dimensions logical device memory ranges. |
 
 ---
 
-## 3. Group B: Simulated / Mocked / Stubbed Commands (27 Commands)
+## 3. Group B: Simulated / Mocked / Stubbed Commands (29 Commands)
 
 These commands validate, parse, and respond correctly according to spec payloads, but use static variables, mock databases, or stubbed placeholders instead of real hardware implementations:
 
@@ -101,20 +99,40 @@ These commands validate, parse, and respond correctly according to spec payloads
 
 ---
 
-### 3.5 MLD Component QoS & Bandwidth Control (Opcodes 0x5403 - 0x5409)
+### 3.5 MLD Component QoS & Bandwidth Control (Opcodes 0x5400 - 0x5409)
 
 * **Commands Covered:**
+  * `Get LD Info` (0x5400)
+  * `Get LD Allocations` (0x5401)
   * `Get/Set QoS Control` (0x5403, 0x5404)
   * `Get QoS Status` (0x5405)
   * `Get/Set QoS Allocated BW` (0x5406, 0x5407)
   * `Get/Set QoS BW Limit` (0x5408, 0x5409)
-* **Command Purpose:** Controls and monitors bandwidth allocations, limits, and congestion metrics per Logical Device to enforce Quality of Service.
-* **Simulated Values & Derivation:**
-  * **QoS Control Defaults:** Moderate backpressure threshold: `10%`, Severe: `25%`, Sample Interval: `8`.
-  * **QoS Status:** Returns a hardcoded link backpressure value of **`5%`**. This value was chosen as a healthy default baseline (sub-threshold) to prevent the virtual switch from thinking the link is congested and issuing throttling requests.
-  * **Fractions and Limits:** Fractions are stored in a dictionary and returned on demand.
-* **Architectural Rationale:** Modeling dynamic packet flow rates and queuing congestion in software requires heavy real-time timing measurements that are too CPU-intensive. Mocking these variables allows QoS discovery and control panels to test their user interfaces.
-* **Limitations:** The bandwidth limits are stored but **do not rate-limit or throttle memory access speeds** inside OpenCIS.
+
+#### Get LD Info (0x5400)
+* **Command Purpose:** Returns total partitionable capacity and supported LD counts for the Multi-Logical Device.
+* **Simulated Values & Derivation:** Currently implemented as an empty python `pass` stub.
+* **Limitations:** Unimplemented stub.
+
+#### Get LD Allocations (0x5401)
+* **Command Purpose:** Returns active partition size map and ranges allocated per Logical Device.
+* **Simulated Values & Derivation:** Currently implemented as an empty python `pass` stub.
+* **Limitations:** Unimplemented stub.
+
+#### Get/Set QoS Control (0x5403, 0x5404)
+* **Command Purpose:** Controls bandwidth sharing, thresholds, and congestion sampling loops.
+* **Simulated Values & Derivation:** Defaults are moderate threshold `10%`, severe `25%`, sample interval `8`.
+* **Limitations:** Programmable values are stored, but bandwidth rate-limiting is not enforced on the emulated virtual memory bus.
+
+#### Get QoS Status (0x5405)
+* **Command Purpose:** Reports measured port link backpressure levels.
+* **Simulated Values & Derivation:** Returns hardcoded sub-threshold link backpressure: **`5%`**.
+* **Limitations:** Static mock value.
+
+#### Get/Set QoS Allocated BW & BW Limit (0x5406 - 0x5409)
+* **Command Purpose:** Enforces minimum allocated bandwidth fractions and hard caps per logical client connection.
+* **Simulated Values & Derivation:** Limits are stored per LD ID inside a virtual dictionary.
+* **Limitations:** Stored but not enforced.
 
 ---
 

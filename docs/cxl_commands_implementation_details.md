@@ -1,17 +1,17 @@
 # CXL Fabric Manager API: Implementation Details & Limitations
 
-This document provides a detailed breakdown of the 36 CXL Fabric Manager (FM) API CCI commands implemented or supported in the OpenCIS repository. It categorizes each command based on whether its execution is fully functional (straightforward integration) or emulated using simulated/mocked values, along with its specific limitations.
+This document provides a detailed breakdown of the 36 CXL Fabric Manager (FM) API CCI commands implemented or supported in the OpenCIS repository. It categorizes each command based on whether its execution is fully functional (straightforward integration) or emulated using simulated/mocked/stubbed values, along with its specific limitations.
 
 ---
 
 ## 1. Summary of Command Classifications
 
-* **Fully Functional Commands**: **15 commands** (Directly integrated with the OpenCIS virtual switch state machines, resource managers, or dynamic capacity device bounds).
-* **Simulated/Mocked Commands**: **21 commands** (Parse and validate specifications correctly, but execute mock behaviors, return static values, or trace simulator logging because the underlying hardware actions are not modeled in CPU emulation).
+* **Fully Functional Commands**: **9 commands** (Directly integrated with the OpenCIS virtual switch state machines, resource managers, or live allocation maps).
+* **Simulated/Mocked/Stubbed Commands**: **27 commands** (Parse and validate specifications correctly, but execute mock behaviors, operate on stubbed placeholder structures, or log tracing events because the underlying physical/hardware actions are not modeled in CPU emulation).
 
 ---
 
-## 2. Group A: Fully Functional Commands (15 Commands)
+## 2. Group A: Fully Functional Commands (9 Commands)
 
 These commands interact directly with active manager objects in OpenCIS (`PhysicalPortManager`, `VirtualSwitchManager`, `MldManager`) to query or modify live emulated states:
 
@@ -26,18 +26,12 @@ These commands interact directly with active manager objects in OpenCIS (`Physic
 | **0x5400** | **Get LD Info** | Queries `MldManager` limits. | Returns the actual total capacity and maximum logical device count configured. |
 | **0x5401** | **Get LD Allocations** | Reads memory profiles. | Returns base addresses and lengths allocated to active LDs. |
 | **0x5402** | **Set LD Allocations** | Updates live allocations in `MldManager`. | Dynamically re-dimensions logical device memory ranges. |
-| **0x5600** | **Get DCD Info** | Reads emulated device specs. | Returns host counts, region block limits, and policy supports. |
-| **0x5601** | **Get Host DC Region Config** | Reads active region config entries. | Returns exact bases, block sizes, and granulates for memory regions. |
-| **0x5602** | **Set DC Region Config** | Modifies active region config entries. | Updates block sizing parameters and block counts in the emulated device. |
-| **0x5603** | **Get DC Region Extent Lists** | Traverses dynamic capacity databases. | Returns list of extents (`start_dpa`, length, sequence, tag) currently active. |
-| **0x5604** | **Initiate Dynamic Capacity Add** | Triggers DCD dynamic capacity add logic. | Runs the state machine to assign memory extents to the emulated host. |
-| **0x5605** | **Initiate Dynamic Capacity Release** | Triggers DCD release logic. | Reclaims dynamic capacity blocks from the emulated host. |
 
 ---
 
-## 3. Group B: Simulated / Mocked Commands (21 Commands)
+## 3. Group B: Simulated / Mocked / Stubbed Commands (27 Commands)
 
-These commands validate, parse, and respond correctly according to spec payloads, but use static or mocked variables instead of real hardware implementations:
+These commands validate, parse, and respond correctly according to spec payloads, but use static variables, mock databases, or stubbed placeholders instead of real hardware implementations:
 
 ### 3.1 Physical Switch Set (Opcodes 0x5102 - 0x5103)
 
@@ -148,14 +142,36 @@ These commands validate, parse, and respond correctly according to spec payloads
 
 ---
 
-### 3.7 DCD Tag & Shared Memory References (Opcodes 0x5606 - 0x5608)
+### 3.7 DCD Management & Reference Tags (Opcodes 0x5600 - 0x5608)
 
-* **Commands Covered:**
-  * `Dynamic Capacity Add Reference` (0x5606)
-  * `Dynamic Capacity Remove Reference` (0x5607)
-  * `Dynamic Capacity List Tags` (0x5608)
-* **Command Purpose:** Manages shared memory allocation references. When multiple hosts share dynamic capacity blocks (extents), the device keeps reference tags to prevent sanitizing/deallocating shared memory until all hosts release their references.
-* **Simulated Values & Derivation:**
-  * Keeps track of tag reference counts and active/pending host bitmaps in a Python dictionary.
-* **Architectural Rationale:** Emulates tag reference counting to verify coordination logic in multi-host dynamic capacity allocations.
-* **Limitations:** Updating reference counts does not trigger actual physical page zeroing, page fault hooks, or security sanitization on memory boards.
+The Dynamic Capacity Device (DCD) commands in this repository are either unimplemented placeholders (stubs) or emulated in simple volatile database structures:
+
+#### Get DCD Info (0x5600)
+* **Command Purpose:** Queries the host counts, dynamic capacity limits, supported selection policies, and total device capacity.
+* **Simulated Values & Derivation:** Returns `GetDcdInfoResponsePayload` with all variables (`num_hosts`, `num_supported_dc_regions`, `total_dynamic_capacity`, block sizes masks) hardcoded to `0`. Contains an explicit `TODO` marker inside the method executor.
+* **Limitations:** Unimplemented stub. It does not read dynamic capacity configurations from active virtual machines.
+
+#### Get Host DC Region Configuration (0x5601)
+* **Command Purpose:** Returns base addresses, decoding granularity, and allocation lengths for dynamically partitionable memory regions.
+* **Simulated Values & Derivation:** Returns an empty default structure `GetHostDCRegionConfigResponsePayload()` where all region configuration attributes default to zero.
+* **Limitations:** Unimplemented stub.
+
+#### Set DC Region Configuration (0x5602)
+* **Command Purpose:** Modifies block sizing and sanitize configurations for dynamically partitionable regions.
+* **Simulated Values & Derivation:** Parses incoming configuration parameters and returns an empty placeholder payload `SetDCRegionConfigResponsePayload()`.
+* **Limitations:** Unimplemented stub; does not save or register region adjustments.
+
+#### Get DC Region Extent Lists (0x5603)
+* **Command Purpose:** Returns lists of memory extents allocated to a host.
+* **Simulated Values & Derivation:** Searches a simulated local database (`_dcd_extents` dictionary) by `host_id` and slices the requested sub-range of active extents.
+* **Limitations:** Although tag reference databases are supported for verification tests, these extents are not backed by live emulated host page mappings or active memory translation slots.
+
+#### Initiate Dynamic Capacity Add (0x5604) & Initiate Dynamic Capacity Release (0x5605)
+* **Command Purpose:** Triggers memory capacity addition/deallocation procedures between endpoint device and host domains.
+* **Simulated Values & Derivation:** Returns `CCI_RETURN_CODE.SUCCESS` (0x0000) payloads directly with placeholder `TODO: WILL NOT WORK WITHOUT IMPLEMENTATION` comments.
+* **Limitations:** Unimplemented stubs. No actual dynamic capacity sizing actions, page zeroing, or address mapping updates are triggered in the virtual memory emulator.
+
+#### Dynamic Capacity Add Reference (0x5606), Dynamic Capacity Remove Reference (0x5607) & List Tags (0x5608)
+* **Command Purpose:** Manages shared memory allocation reference tags to prevent deallocating or sanitizing shared dynamic capacity blocks until all hosts release them.
+* **Simulated Values & Derivation:** Stores and monitors tag count structures and host reference bitmaps inside volatile Python state variables.
+* **Limitations:** Volatile storage. Setting or clearing references does not lock/unlock real pages or trigger physical hardware sanitization on endpoint memory blocks.

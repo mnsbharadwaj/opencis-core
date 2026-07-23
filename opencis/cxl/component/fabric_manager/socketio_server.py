@@ -39,7 +39,86 @@ from opencis.cxl.component.pbr_switch_manager import DrtEntry, DrtEntryType
 from opencis.cxl.cci.common import (
     CCI_VENDOR_SPECIFIC_OPCODE,
     get_opcode_string,
+    CCI_FM_API_COMMAND_OPCODE,
+    CCI_RETURN_CODE,
 )
+
+# New FM CCI Payload/Command Imports
+from opencis.cxl.cci.fabric_manager.physical_switch import (
+    PhysicalPortControlRequestPayload,
+    PhysicalPortControlCommand,
+    SendPpbCxlIoConfigurationRequestPayload,
+    SendPpbCxlIoConfigurationRequestCommand,
+    SendPpbCxlIoConfigurationResponsePayload,
+    GetDomainValidationSvStateCommand,
+    SetDomainValidationSvCommand,
+    GetVcsDomainValidationSvStateCommand,
+    GetDomainValidationSvCommand,
+    SetDomainValidationSvRequestPayload,
+    GetVcsDomainValidationSvStateRequestPayload,
+    GetDomainValidationSvRequestPayload,
+)
+from opencis.cxl.cci.fabric_manager.virtual_switch import (
+    GenerateAerEventRequestPayload,
+    GenerateAerEventCommand,
+)
+from opencis.cxl.cci.fabric_manager.mld_port import (
+    SendLdCxlIoConfigurationRequestPayload,
+    SendLdCxlIoConfigurationRequestCommand,
+    SendLdCxlIoMemoryRequestPayload,
+    SendLdCxlIoMemoryRequestCommand,
+)
+from opencis.cxl.cci.fabric_manager.mld_components import (
+    GetQosControlCommand,
+    SetQosControlCommand,
+    GetQosStatusCommand,
+    GetQosAllocatedBwCommand,
+    SetQosAllocatedBwCommand,
+    GetQosBwLimitCommand,
+    SetQosBwLimitCommand,
+    QosControlPayload,
+    QosFractionRequestPayload,
+    QosFractionResponsePayload,
+)
+from opencis.cxl.cci.fabric_manager.multi_headed_devices import (
+    GetMultiHeadedInfoCommand,
+    GetMultiHeadedInfoRequestPayload,
+    GetHeadInfoCommand,
+    GetHeadInfoRequestPayload,
+)
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    GetDcRegionExtentListsCommand,
+    GetDcRegionExtentListsRequestPayload,
+    DynamicCapacityAddReferenceCommand,
+    DynamicCapacityReferenceRequestPayload,
+    DynamicCapacityRemoveReferenceCommand,
+    DynamicCapacityListTagsCommand,
+    DynamicCapacityListTagsRequestPayload,
+)
+
+from dataclasses import asdict, is_dataclass
+
+def to_dict_safe(obj):
+    if is_dataclass(obj):
+        data = asdict(obj)
+    elif isinstance(obj, dict):
+        data = obj
+    elif isinstance(obj, list):
+        data = [to_dict_safe(x) for x in obj]
+    else:
+        return obj
+
+    def clean_bytes(d):
+        if isinstance(d, dict):
+            return {k: clean_bytes(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [clean_bytes(x) for x in d]
+        elif isinstance(d, bytes):
+            return d.hex()
+        return d
+
+    return clean_bytes(data)
+
 from opencis.cxl.transport.cci_packets import CciMessagePacket
 
 
@@ -200,6 +279,31 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("gae:proxyGfdMgmt")
         self._register_handler("gae:getProxyStatus")
         self._register_handler("gae:cancelProxy")
+
+        # New FM CCI commands
+        self._register_handler("port:control")
+        self._register_handler("port:sendPpbConfig")
+        self._register_handler("domain:getValState")
+        self._register_handler("domain:setVal")
+        self._register_handler("domain:getVcsValState")
+        self._register_handler("domain:getVal")
+        self._register_handler("vcs:generateAer")
+        self._register_handler("ld:sendConfig")
+        self._register_handler("ld:sendMemory")
+        self._register_handler("qos:getControl")
+        self._register_handler("qos:setControl")
+        self._register_handler("qos:getStatus")
+        self._register_handler("qos:getAllocBw")
+        self._register_handler("qos:setAllocBw")
+        self._register_handler("qos:getBwLimit")
+        self._register_handler("qos:setBwLimit")
+        self._register_handler("mhd:getInfo")
+        self._register_handler("mhd:getHeadInfo")
+        self._register_handler("dcd:getExtentList")
+        self._register_handler("dcd:addRef")
+        self._register_handler("dcd:removeRef")
+        self._register_handler("dcd:listTags")
+
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
     def _register_handler(self, event):
@@ -272,6 +376,52 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._gae_get_proxy_status(data)
             elif event_type == "gae:cancelProxy":
                 response = await self._gae_cancel_proxy(data)
+            # New FM CCI commands
+            elif event_type == "port:control":
+                response = await self._port_control(data)
+            elif event_type == "port:sendPpbConfig":
+                response = await self._send_ppb_config(data)
+            elif event_type == "domain:getValState":
+                response = await self._get_domain_validation_state()
+            elif event_type == "domain:setVal":
+                response = await self._set_domain_validation_sv(data)
+            elif event_type == "domain:getVcsValState":
+                response = await self._get_vcs_domain_validation_sv_state(data)
+            elif event_type == "domain:getVal":
+                response = await self._get_domain_validation_sv(data)
+            elif event_type == "vcs:generateAer":
+                response = await self._generate_aer_event(data)
+            elif event_type == "ld:sendConfig":
+                response = await self._send_ld_config(data)
+            elif event_type == "ld:sendMemory":
+                response = await self._send_ld_memory(data)
+            elif event_type == "qos:getControl":
+                response = await self._get_qos_control()
+            elif event_type == "qos:setControl":
+                response = await self._set_qos_control(data)
+            elif event_type == "qos:getStatus":
+                response = await self._get_qos_status()
+            elif event_type == "qos:getAllocBw":
+                response = await self._get_qos_allocated_bw(data)
+            elif event_type == "qos:setAllocBw":
+                response = await self._set_qos_allocated_bw(data)
+            elif event_type == "qos:getBwLimit":
+                response = await self._get_qos_bw_limit(data)
+            elif event_type == "qos:setBwLimit":
+                response = await self._set_qos_bw_limit(data)
+            elif event_type == "mhd:getInfo":
+                response = await self._get_multi_headed_info(data)
+            elif event_type == "mhd:getHeadInfo":
+                response = await self._get_head_info(data)
+            elif event_type == "dcd:getExtentList":
+                response = await self._get_dc_region_extent_lists(data)
+            elif event_type == "dcd:addRef":
+                response = await self._dynamic_capacity_add_reference(data)
+            elif event_type == "dcd:removeRef":
+                response = await self._dynamic_capacity_remove_reference(data)
+            elif event_type == "dcd:listTags":
+                response = await self._dynamic_capacity_list_tags(data)
+
             else:
                 response = CommandResponse(error=f"Unknown event: {event_type}")
             logger.info(self._create_message(f"Response: {pformat(response)}"))
@@ -1526,3 +1676,286 @@ class FabricManagerSocketIoServer(RunnableComponent):
         except Exception as e:
             logger.error(self._create_message(f"Error during startup Get LD Info calls: {e}"))
             # Don't fail the entire startup process if this fails
+
+    # New FM CCI Command Handlers
+    async def _port_control(self, data) -> CommandResponse:
+        request = PhysicalPortControlRequestPayload(ppb_id=data["ppbId"], port_opcode=data["portOpcode"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.PHYSICAL_PORT_CONTROL, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _send_ppb_config(self, data) -> CommandResponse:
+        request = SendPpbCxlIoConfigurationRequestPayload(
+            ppb_id=data["ppbId"],
+            register_num=data["registerNum"],
+            ext_register_num=data["extRegisterNum"],
+            first_dword_byte_enable=data["firstDwordByteEnable"],
+            transaction_type=data["transactionType"],
+            transaction_data=data.get("transactionData", 0)
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SEND_PPB_CXL_IO_CONFIGURATION_REQUEST, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            parsed = SendPpbCxlIoConfigurationResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_domain_validation_state(self) -> CommandResponse:
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_DOMAIN_VALIDATION_SV_STATE, b""
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.physical_switch.domain_validation import GetDomainValidationSvStateResponsePayload
+            parsed = GetDomainValidationSvStateResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _set_domain_validation_sv(self, data) -> CommandResponse:
+        secret_bytes = bytes.fromhex(data["secretValue"])
+        request = SetDomainValidationSvRequestPayload(secret_value=secret_bytes)
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SET_DOMAIN_VALIDATION_SV, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_vcs_domain_validation_sv_state(self, data) -> CommandResponse:
+        request = GetVcsDomainValidationSvStateRequestPayload(vcs_id=data["vcsId"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_VCS_DOMAIN_VALIDATION_SV_STATE, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.physical_switch.domain_validation import GetVcsDomainValidationSvStateResponsePayload
+            parsed = GetVcsDomainValidationSvStateResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_domain_validation_sv(self, data) -> CommandResponse:
+        request = GetDomainValidationSvRequestPayload(vcs_id=data["vcsId"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_DOMAIN_VALIDATION_SV, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.physical_switch.domain_validation import GetDomainValidationSvResponsePayload
+            parsed = GetDomainValidationSvResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _generate_aer_event(self, data) -> CommandResponse:
+        header_bytes = bytes.fromhex(data["aerHeader"])
+        request = GenerateAerEventRequestPayload(
+            vcs_id=data["vcsId"],
+            vppb_instance=data["vppbInstance"],
+            aer_error=data["aerError"],
+            aer_header=header_bytes
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GENERATE_AER_EVENT, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _send_ld_config(self, data) -> CommandResponse:
+        request = SendLdCxlIoConfigurationRequestPayload(
+            ppb_id=data["ppbId"],
+            register_num=data["registerNum"],
+            ext_register_num=data["extRegisterNum"],
+            first_dword_byte_enable=data["firstDwordByteEnable"],
+            transaction_type=data["transactionType"],
+            ld_id=data["ldId"],
+            transaction_data=data.get("transactionData", 0)
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SEND_LD_CXL_IO_CONFIGURATION_REQUEST, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.mld_port import SendLdCxlIoConfigurationResponsePayload
+            parsed = SendLdCxlIoConfigurationResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _send_ld_memory(self, data) -> CommandResponse:
+        data_bytes = bytes.fromhex(data["transactionData"]) if data.get("transactionData") else b""
+        request = SendLdCxlIoMemoryRequestPayload(
+            port_id=data["portId"],
+            first_dword_byte_enable=data["firstDwordByteEnable"],
+            last_dword_byte_enable=data["lastDwordByteEnable"],
+            transaction_type=data["transactionType"],
+            ld_id=data["ldId"],
+            transaction_length=data["transactionLength"],
+            transaction_address=data["transactionAddress"],
+            transaction_data=data_bytes
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SEND_LD_CXL_IO_MEMORY_REQUEST, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.mld_port import SendLdCxlIoMemoryResponsePayload
+            parsed = SendLdCxlIoMemoryResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_qos_control(self) -> CommandResponse:
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_QOS_CONTROL, b""
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            parsed = QosControlPayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _set_qos_control(self, data) -> CommandResponse:
+        request = QosControlPayload(
+            qos_telemetry_control=data["qosTelemetryControl"],
+            egress_moderate_pct=data["egressModeratePct"],
+            egress_severe_pct=data["egressSeverePct"],
+            backpressure_sample_interval=data["backpressureSampleInterval"],
+            req_cmp_basis=data["reqCmpBasis"],
+            completion_collection_interval=data["completionCollectionInterval"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SET_QOS_CONTROL, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_qos_status(self) -> CommandResponse:
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_QOS_STATUS, b""
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result={"backpressure_pct": resp_bytes[0]})
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_qos_allocated_bw(self, data) -> CommandResponse:
+        request = QosFractionRequestPayload(num_lds=data["numLds"], start_ld_id=data["startLdId"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_QOS_ALLOCATED_BANDWIDTH, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            parsed = QosFractionResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _set_qos_allocated_bw(self, data) -> CommandResponse:
+        fractions_bytes = bytes.fromhex(data["fractions"])
+        request = QosFractionResponsePayload(
+            num_lds=data["numLds"],
+            start_ld_id=data["startLdId"],
+            fractions=fractions_bytes
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SET_QOS_ALLOCATED_BANDWIDTH, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_qos_bw_limit(self, data) -> CommandResponse:
+        request = QosFractionRequestPayload(num_lds=data["numLds"], start_ld_id=data["startLdId"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_QOS_BANDWIDTH_LIMIT, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            parsed = QosFractionResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _set_qos_bw_limit(self, data) -> CommandResponse:
+        fractions_bytes = bytes.fromhex(data["fractions"])
+        request = QosFractionResponsePayload(
+            num_lds=data["numLds"],
+            start_ld_id=data["startLdId"],
+            fractions=fractions_bytes
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SET_QOS_BANDWIDTH_LIMIT, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_multi_headed_info(self, data) -> CommandResponse:
+        request = GetMultiHeadedInfoRequestPayload(
+            start_ld_id=data["startLdId"],
+            ld_map_list_limit=data["ldMapListLimit"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_MULTI_HEADED_INFO, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.multi_headed_devices import GetMultiHeadedInfoResponsePayload
+            parsed = GetMultiHeadedInfoResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_head_info(self, data) -> CommandResponse:
+        request = GetHeadInfoRequestPayload(
+            start_head=data["startHead"],
+            num_heads=data["numHeads"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_HEAD_INFO, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.multi_headed_devices import GetHeadInfoResponsePayload
+            parsed = GetHeadInfoResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_dc_region_extent_lists(self, data) -> CommandResponse:
+        request = GetDcRegionExtentListsRequestPayload(
+            host_id=data["hostId"],
+            starting_extent_index=data["startingExtentIndex"],
+            extent_count=data["extentCount"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_DC_REGION_EXTENT_LISTS, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.dcd_management import GetDcRegionExtentListsResponsePayload
+            parsed = GetDcRegionExtentListsResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _dynamic_capacity_add_reference(self, data) -> CommandResponse:
+        tag_bytes = bytes.fromhex(data["tag"])
+        request = DynamicCapacityReferenceRequestPayload(tag=tag_bytes)
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.DYNAMIC_CAPACITY_ADD_REFERENCE, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _dynamic_capacity_remove_reference(self, data) -> CommandResponse:
+        tag_bytes = bytes.fromhex(data["tag"])
+        request = DynamicCapacityReferenceRequestPayload(tag=tag_bytes)
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.DYNAMIC_CAPACITY_REMOVE_REFERENCE, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _dynamic_capacity_list_tags(self, data) -> CommandResponse:
+        request = DynamicCapacityListTagsRequestPayload(
+            starting_index=data["startingIndex"],
+            max_tags=data["maxTags"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.DYNAMIC_CAPACITY_LIST_TAGS, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.dcd_management import DynamicCapacityListTagsResponsePayload
+            parsed = DynamicCapacityListTagsResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+

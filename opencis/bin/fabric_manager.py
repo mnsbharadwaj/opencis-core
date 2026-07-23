@@ -433,3 +433,204 @@ def gae_cancel_proxy(thread_id: int):
         fm gae-cancel-proxy 1
     """
     asyncio.run(socketio_client.gae_cancel_proxy(thread_id))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Physical Switch Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="port-control")
+@click.argument("ppb_id", type=BASED_INT)
+@click.argument("port_opcode", type=BASED_INT)
+def port_control(ppb_id: int, port_opcode: int):
+    """Physical Port Control (5102h)."""
+    asyncio.run(socketio_client.port_control(ppb_id, port_opcode))
+
+@fabric_manager_group.command(name="send-ppb-config")
+@click.argument("ppb_id", type=BASED_INT)
+@click.argument("register_num", type=BASED_INT)
+@click.argument("ext_register_num", type=BASED_INT)
+@click.argument("first_dword_byte_enable", type=BASED_INT)
+@click.argument("transaction_type", type=BASED_INT)
+@click.option("--transaction-data", type=BASED_INT, default=0)
+def send_ppb_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, transaction_data: int):
+    """Send PPB CXL.io Config (5103h)."""
+    asyncio.run(socketio_client.send_ppb_config(
+        ppb_id, register_num, ext_register_num, first_dword_byte_enable, transaction_type, transaction_data
+    ))
+
+@fabric_manager_group.command(name="get-domain-val-state")
+def get_domain_val_state():
+    """Get Domain Validation SV State (5104h)."""
+    asyncio.run(socketio_client.get_domain_val_state())
+
+@fabric_manager_group.command(name="set-domain-val")
+@click.argument("secret_value_hex", type=str)
+def set_domain_val(secret_value_hex: str):
+    """Set Domain Validation SV (5105h)."""
+    asyncio.run(socketio_client.set_domain_val(secret_value_hex))
+
+@fabric_manager_group.command(name="get-vcs-domain-val-state")
+@click.argument("vcs_id", type=BASED_INT)
+def get_vcs_domain_val_state(vcs_id: int):
+    """Get VCS Domain Validation SV State (5106h)."""
+    asyncio.run(socketio_client.get_vcs_domain_val_state(vcs_id))
+
+@fabric_manager_group.command(name="get-domain-val")
+@click.argument("vcs_id", type=BASED_INT)
+def get_domain_val(vcs_id: int):
+    """Get Domain Validation SV (5107h)."""
+    asyncio.run(socketio_client.get_domain_val(vcs_id))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Virtual Switch Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="generate-aer")
+@click.argument("vcs_id", type=BASED_INT)
+@click.argument("vppb_instance", type=BASED_INT)
+@click.argument("aer_error", type=BASED_INT)
+@click.argument("aer_header_hex", type=str)
+def generate_aer(vcs_id: int, vppb_instance: int, aer_error: int, aer_header_hex: str):
+    """Generate AER Event (5203h)."""
+    asyncio.run(socketio_client.generate_aer(vcs_id, vppb_instance, aer_error, aer_header_hex))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MLD Port Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="send-ld-config")
+@click.argument("ppb_id", type=BASED_INT)
+@click.argument("register_num", type=BASED_INT)
+@click.argument("ext_register_num", type=BASED_INT)
+@click.argument("first_dword_byte_enable", type=BASED_INT)
+@click.argument("transaction_type", type=BASED_INT)
+@click.argument("ld_id", type=BASED_INT)
+@click.option("--transaction-data", type=BASED_INT, default=0)
+def send_ld_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_data: int):
+    """Send LD CXL.io Config (5301h)."""
+    asyncio.run(socketio_client.send_ld_config(
+        ppb_id, register_num, ext_register_num, first_dword_byte_enable, transaction_type, ld_id, transaction_data
+    ))
+
+@fabric_manager_group.command(name="send-ld-memory")
+@click.argument("port_id", type=BASED_INT)
+@click.argument("first_dword_byte_enable", type=BASED_INT)
+@click.argument("last_dword_byte_enable", type=BASED_INT)
+@click.argument("transaction_type", type=BASED_INT)
+@click.argument("ld_id", type=BASED_INT)
+@click.argument("transaction_length", type=BASED_INT)
+@click.argument("transaction_address", type=BASED_INT)
+@click.option("--transaction-data-hex", type=str, default="")
+def send_ld_memory(port_id: int, first_dword_byte_enable: int, last_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_length: int, transaction_address: int, transaction_data_hex: str):
+    """Send LD CXL.io Memory Request (5302h)."""
+    asyncio.run(socketio_client.send_ld_memory(
+        port_id, first_dword_byte_enable, last_dword_byte_enable, transaction_type, ld_id, transaction_length, transaction_address, transaction_data_hex
+    ))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MLD QoS Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="get-qos-control")
+def get_qos_control():
+    """Get QoS Control (5403h)."""
+    asyncio.run(socketio_client.get_qos_control())
+
+@fabric_manager_group.command(name="set-qos-control")
+@click.argument("qos_telemetry_control", type=BASED_INT)
+@click.argument("egress_moderate_pct", type=BASED_INT)
+@click.argument("egress_severe_pct", type=BASED_INT)
+@click.argument("backpressure_sample_interval", type=BASED_INT)
+@click.argument("req_cmp_basis", type=BASED_INT)
+@click.argument("completion_collection_interval", type=BASED_INT)
+def set_qos_control(qos_telemetry_control: int, egress_moderate_pct: int, egress_severe_pct: int, backpressure_sample_interval: int, req_cmp_basis: int, completion_collection_interval: int):
+    """Set QoS Control (5404h)."""
+    asyncio.run(socketio_client.set_qos_control(
+        qos_telemetry_control, egress_moderate_pct, egress_severe_pct, backpressure_sample_interval, req_cmp_basis, completion_collection_interval
+    ))
+
+@fabric_manager_group.command(name="get-qos-status")
+def get_qos_status():
+    """Get QoS Status (5405h)."""
+    asyncio.run(socketio_client.get_qos_status())
+
+@fabric_manager_group.command(name="get-qos-alloc-bw")
+@click.argument("num_lds", type=BASED_INT)
+@click.argument("start_ld_id", type=BASED_INT)
+def get_qos_alloc_bw(num_lds: int, start_ld_id: int):
+    """Get QoS Allocated BW (5406h)."""
+    asyncio.run(socketio_client.get_qos_alloc_bw(num_lds, start_ld_id))
+
+@fabric_manager_group.command(name="set-qos-alloc-bw")
+@click.argument("num_lds", type=BASED_INT)
+@click.argument("start_ld_id", type=BASED_INT)
+@click.argument("fractions_hex", type=str)
+def set_qos_alloc_bw(num_lds: int, start_ld_id: int, fractions_hex: str):
+    """Set QoS Allocated BW (5407h)."""
+    asyncio.run(socketio_client.set_qos_alloc_bw(num_lds, start_ld_id, fractions_hex))
+
+@fabric_manager_group.command(name="get-qos-bw-limit")
+@click.argument("num_lds", type=BASED_INT)
+@click.argument("start_ld_id", type=BASED_INT)
+def get_qos_bw_limit(num_lds: int, start_ld_id: int):
+    """Get QoS BW Limit (5408h)."""
+    asyncio.run(socketio_client.get_qos_bw_limit(num_lds, start_ld_id))
+
+@fabric_manager_group.command(name="set-qos-bw-limit")
+@click.argument("num_lds", type=BASED_INT)
+@click.argument("start_ld_id", type=BASED_INT)
+@click.argument("fractions_hex", type=str)
+def set_qos_bw_limit(num_lds: int, start_ld_id: int, fractions_hex: str):
+    """Set QoS BW Limit (5409h)."""
+    asyncio.run(socketio_client.set_qos_bw_limit(num_lds, start_ld_id, fractions_hex))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Headed Device Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="get-mhd-info")
+@click.argument("start_ld_id", type=BASED_INT)
+@click.argument("ld_map_list_limit", type=BASED_INT)
+def get_mhd_info(start_ld_id: int, ld_map_list_limit: int):
+    """Get Multi-Headed Info (5500h)."""
+    asyncio.run(socketio_client.get_mhd_info(start_ld_id, ld_map_list_limit))
+
+@fabric_manager_group.command(name="get-head-info")
+@click.argument("start_head", type=BASED_INT)
+@click.argument("num_heads", type=BASED_INT)
+def get_head_info(start_head: int, num_heads: int):
+    """Get Head Info (5501h)."""
+    asyncio.run(socketio_client.get_head_info(start_head, num_heads))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DCD Management Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="get-dc-extent-list")
+@click.argument("host_id", type=BASED_INT)
+@click.argument("starting_extent_index", type=BASED_INT)
+@click.argument("extent_count", type=BASED_INT)
+def get_dc_extent_list(host_id: int, starting_extent_index: int, extent_count: int):
+    """Get DC Region Extent Lists (5603h)."""
+    asyncio.run(socketio_client.get_dc_extent_list(host_id, starting_extent_index, extent_count))
+
+@fabric_manager_group.command(name="dc-add-ref")
+@click.argument("tag_hex", type=str)
+def dc_add_ref(tag_hex: str):
+    """Dynamic Capacity Add Reference (5606h)."""
+    asyncio.run(socketio_client.dc_add_ref(tag_hex))
+
+@fabric_manager_group.command(name="dc-remove-ref")
+@click.argument("tag_hex", type=str)
+def dc_remove_ref(tag_hex: str):
+    """Dynamic Capacity Remove Reference (5607h)."""
+    asyncio.run(socketio_client.dc_remove_ref(tag_hex))
+
+@fabric_manager_group.command(name="dc-list-tags")
+@click.argument("starting_index", type=BASED_INT)
+@click.argument("max_tags", type=BASED_INT)
+def dc_list_tags(starting_index: int, max_tags: int):
+    """Dynamic Capacity List Tags (5608h)."""
+    asyncio.run(socketio_client.dc_list_tags(starting_index, max_tags))
+

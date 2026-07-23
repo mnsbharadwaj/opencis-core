@@ -29,4 +29,7 @@ from .domain_validation import (
     GetVcsDomainValidationSvStateCommand,
     GetDomainValidationSvCommand,
     SetDomainValidationSvRequestPayload,
+    GetVcsDomainValidationSvStateRequestPayload,
+    GetDomainValidationSvRequestPayload,
 )
+

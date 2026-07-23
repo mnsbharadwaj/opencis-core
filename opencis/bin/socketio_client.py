@@ -369,6 +369,159 @@ async def gae_cancel_proxy(thread_id: int):
     await sio.disconnect()
 
 
+# New FM CCI Command client methods
+async def port_control(ppb_id: int, port_opcode: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("port:control", {"ppbId": ppb_id, "portOpcode": port_opcode})
+    await sio.disconnect()
+
+async def send_ppb_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, transaction_data: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("port:sendPpbConfig", {
+        "ppbId": ppb_id,
+        "registerNum": register_num,
+        "extRegisterNum": ext_register_num,
+        "firstDwordByteEnable": first_dword_byte_enable,
+        "transactionType": transaction_type,
+        "transactionData": transaction_data
+    })
+    await sio.disconnect()
+
+async def get_domain_val_state():
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:getValState", {})
+    await sio.disconnect()
+
+async def set_domain_val(secret_value_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:setVal", {"secretValue": secret_value_hex})
+    await sio.disconnect()
+
+async def get_vcs_domain_val_state(vcs_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:getVcsValState", {"vcsId": vcs_id})
+    await sio.disconnect()
+
+async def get_domain_val(vcs_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:getVal", {"vcsId": vcs_id})
+    await sio.disconnect()
+
+async def generate_aer(vcs_id: int, vppb_instance: int, aer_error: int, aer_header_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("vcs:generateAer", {
+        "vcsId": vcs_id,
+        "vppbInstance": vppb_instance,
+        "aerError": aer_error,
+        "aerHeader": aer_header_hex
+    })
+    await sio.disconnect()
+
+async def send_ld_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_data: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("ld:sendConfig", {
+        "ppbId": ppb_id,
+        "registerNum": register_num,
+        "extRegisterNum": ext_register_num,
+        "firstDwordByteEnable": first_dword_byte_enable,
+        "transactionType": transaction_type,
+        "ldId": ld_id,
+        "transactionData": transaction_data
+    })
+    await sio.disconnect()
+
+async def send_ld_memory(port_id: int, first_dword_byte_enable: int, last_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_length: int, transaction_address: int, transaction_data_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("ld:sendMemory", {
+        "portId": port_id,
+        "firstDwordByteEnable": first_dword_byte_enable,
+        "lastDwordByteEnable": last_dword_byte_enable,
+        "transactionType": transaction_type,
+        "ldId": ld_id,
+        "transactionLength": transaction_length,
+        "transactionAddress": transaction_address,
+        "transactionData": transaction_data_hex
+    })
+    await sio.disconnect()
+
+async def get_qos_control():
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:getControl", {})
+    await sio.disconnect()
+
+async def set_qos_control(qos_telemetry_control: int, egress_moderate_pct: int, egress_severe_pct: int, backpressure_sample_interval: int, req_cmp_basis: int, completion_collection_interval: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:setControl", {
+        "qosTelemetryControl": qos_telemetry_control,
+        "egressModeratePct": egress_moderate_pct,
+        "egressSeverePct": egress_severe_pct,
+        "backpressureSampleInterval": backpressure_sample_interval,
+        "reqCmpBasis": req_cmp_basis,
+        "completionCollectionInterval": completion_collection_interval
+    })
+    await sio.disconnect()
+
+async def get_qos_status():
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:getStatus", {})
+    await sio.disconnect()
+
+async def get_qos_alloc_bw(num_lds: int, start_ld_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:getAllocBw", {"numLds": num_lds, "startLdId": start_ld_id})
+    await sio.disconnect()
+
+async def set_qos_alloc_bw(num_lds: int, start_ld_id: int, fractions_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:setAllocBw", {"numLds": num_lds, "startLdId": start_ld_id, "fractions": fractions_hex})
+    await sio.disconnect()
+
+async def get_qos_bw_limit(num_lds: int, start_ld_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:getBwLimit", {"numLds": num_lds, "startLdId": start_ld_id})
+    await sio.disconnect()
+
+async def set_qos_bw_limit(num_lds: int, start_ld_id: int, fractions_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("qos:setBwLimit", {"numLds": num_lds, "startLdId": start_ld_id, "fractions": fractions_hex})
+    await sio.disconnect()
+
+async def get_mhd_info(start_ld_id: int, ld_map_list_limit: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("mhd:getInfo", {"startLdId": start_ld_id, "ldMapListLimit": ld_map_list_limit})
+    await sio.disconnect()
+
+async def get_head_info(start_head: int, num_heads: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("mhd:getHeadInfo", {"startHead": start_head, "numHeads": num_heads})
+    await sio.disconnect()
+
+async def get_dc_extent_list(host_id: int, starting_extent_index: int, extent_count: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:getExtentList", {
+        "hostId": host_id,
+        "startingExtentIndex": starting_extent_index,
+        "extentCount": extent_count
+    })
+    await sio.disconnect()
+
+async def dc_add_ref(tag_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:addRef", {"tag": tag_hex})
+    await sio.disconnect()
+
+async def dc_remove_ref(tag_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:removeRef", {"tag": tag_hex})
+    await sio.disconnect()
+
+async def dc_list_tags(starting_index: int, max_tags: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:listTags", {"startingIndex": starting_index, "maxTags": max_tags})
+    await sio.disconnect()
+
+
+
 # Main asynchronous function to start the client
 async def start_client():
     await sio.connect("http://0.0.0.0:8200")

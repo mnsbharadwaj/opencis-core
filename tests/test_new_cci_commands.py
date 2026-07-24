@@ -29,7 +29,11 @@ from opencis.cxl.cci.fabric_manager.physical_switch import (
     GetDomainValidationSvCommand,
     SetDomainValidationSvRequestPayload,
 )
-
+# Import Virtual Switch Commands
+from opencis.cxl.cci.fabric_manager.virtual_switch import (
+    GenerateAerEventCommand,
+    GenerateAerEventRequestPayload,
+)
 
 def run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
@@ -143,3 +147,26 @@ def test_domain_validation_execute(virtual_switch_manager):
     resp_get = run(cmd_get_sv._execute(req_get))
     assert resp_get.return_code == CCI_RETURN_CODE.SUCCESS
     assert resp_get.payload == uuid_bytes
+
+
+# ===========================================================================
+# Virtual Switch Command Set Tests
+# ===========================================================================
+
+def test_generate_aer_event_payload():
+    payload = GenerateAerEventRequestPayload(vcs_id=1, vppb_instance=2, aer_error=0x80000005, aer_header=b"\x11" * 32)
+    dumped = payload.dump()
+    parsed = GenerateAerEventRequestPayload.parse(dumped)
+    assert parsed.vcs_id == 1
+    assert parsed.vppb_instance == 2
+    assert parsed.aer_error == 0x80000005
+    assert parsed.aer_header == b"\x11" * 32
+
+
+def test_generate_aer_event_execute(virtual_switch_manager):
+    cmd = GenerateAerEventCommand(virtual_switch_manager)
+    req_payload = GenerateAerEventRequestPayload(vcs_id=0, vppb_instance=1, aer_error=0x80000005, aer_header=b"\x00" * 32)
+    req = CciRequest(opcode=cmd.OPCODE, payload=req_payload.dump())
+    resp = run(cmd._execute(req))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+

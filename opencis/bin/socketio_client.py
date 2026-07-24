@@ -408,6 +408,18 @@ async def get_domain_val(vcs_id: int):
     await sio.disconnect()
 
 
+async def generate_aer(vcs_id: int, vppb_instance: int, aer_error: int, aer_header_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("vcs:generateAer", {
+        "vcsId": vcs_id,
+        "vppbInstance": vppb_instance,
+        "aerError": aer_error,
+        "aerHeader": aer_header_hex
+    })
+    await sio.disconnect()
+
+
+
 
 # Main asynchronous function to start the client
 async def start_client():

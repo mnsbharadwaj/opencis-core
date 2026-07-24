@@ -58,6 +58,11 @@ from opencis.cxl.cci.fabric_manager.physical_switch import (
     GetVcsDomainValidationSvStateRequestPayload,
     GetDomainValidationSvRequestPayload,
 )
+from opencis.cxl.cci.fabric_manager.virtual_switch import (
+    GenerateAerEventRequestPayload,
+    GenerateAerEventCommand,
+)
+
 
 from dataclasses import asdict, is_dataclass
 
@@ -251,6 +256,10 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("domain:getVcsValState")
         self._register_handler("domain:getVal")
 
+        # Virtual Switch Commands
+        self._register_handler("vcs:generateAer")
+
+
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
     def _register_handler(self, event):
@@ -336,6 +345,10 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._get_vcs_domain_validation_sv_state(data)
             elif event_type == "domain:getVal":
                 response = await self._get_domain_validation_sv(data)
+            # Virtual Switch Commands
+            elif event_type == "vcs:generateAer":
+                response = await self._generate_aer_event(data)
+
 
             else:
                 response = CommandResponse(error=f"Unknown event: {event_type}")
@@ -1660,4 +1673,21 @@ class FabricManagerSocketIoServer(RunnableComponent):
             parsed = GetDomainValidationSvResponsePayload.parse(resp_bytes)
             return CommandResponse(error="", result=to_dict_safe(parsed))
         return CommandResponse(error=return_code.name, result=None)
+
+    # Virtual Switch Command Handlers
+    async def _generate_aer_event(self, data) -> CommandResponse:
+        header_bytes = bytes.fromhex(data["aerHeader"])
+        request = GenerateAerEventRequestPayload(
+            vcs_id=data["vcsId"],
+            vppb_instance=data["vppbInstance"],
+            aer_error=data["aerError"],
+            aer_header=header_bytes
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GENERATE_AER_EVENT, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
 

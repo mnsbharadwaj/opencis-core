@@ -58,6 +58,7 @@ from opencis.cxl.cci.fabric_manager.virtual_switch import (
     UnbindVppbCommand,
     FreezeVppbCommand,
     UnfreezeVppbCommand,
+    GenerateAerEventCommand,
 )
 from opencis.cxl.cci.vendor_specfic import (
     NotifySwitchUpdateRequestPayload,
@@ -239,6 +240,8 @@ class CxlSwitch(RunnableComponent):
             SetDomainValidationSvCommand(self._virtual_switch_manager),
             GetVcsDomainValidationSvStateCommand(self._virtual_switch_manager),
             GetDomainValidationSvCommand(self._virtual_switch_manager),
+            # Virtual Switch Commands
+            GenerateAerEventCommand(self._virtual_switch_manager),
         ]
         # Register PBR + GAE commands only if the switch is in PBR mode
         if self._enable_pbr and self._pbr_switch_manager:

@@ -482,3 +482,18 @@ def get_domain_val(vcs_id: int):
     """Get Domain Validation SV (5107h)."""
     asyncio.run(socketio_client.get_domain_val(vcs_id))
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Virtual Switch Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="generate-aer")
+@click.argument("vcs_id", type=BASED_INT)
+@click.argument("vppb_instance", type=BASED_INT)
+@click.argument("aer_error", type=BASED_INT)
+@click.argument("aer_header_hex", type=str)
+def generate_aer(vcs_id: int, vppb_instance: int, aer_error: int, aer_header_hex: str):
+    """Generate AER Event (5203h)."""
+    asyncio.run(socketio_client.generate_aer(vcs_id, vppb_instance, aer_error, aer_header_hex))
+
+

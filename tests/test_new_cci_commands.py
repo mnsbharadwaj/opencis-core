@@ -34,6 +34,14 @@ from opencis.cxl.cci.fabric_manager.virtual_switch import (
     GenerateAerEventCommand,
     GenerateAerEventRequestPayload,
 )
+# Import MLD Port Commands
+from opencis.cxl.cci.fabric_manager.mld_port import (
+    SendLdCxlIoConfigurationRequestCommand,
+    SendLdCxlIoConfigurationRequestPayload,
+    SendLdCxlIoMemoryRequestCommand,
+    SendLdCxlIoMemoryRequestPayload,
+)
+
 
 def run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
@@ -169,4 +177,32 @@ def test_generate_aer_event_execute(virtual_switch_manager):
     req = CciRequest(opcode=cmd.OPCODE, payload=req_payload.dump())
     resp = run(cmd._execute(req))
     assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+
+
+# ===========================================================================
+# MLD Port Command Set Tests
+# ===========================================================================
+
+def test_send_ld_cxl_io_config_execute(physical_port_manager):
+    cmd = SendLdCxlIoConfigurationRequestCommand(physical_port_manager)
+    payload = SendLdCxlIoConfigurationRequestPayload(
+        ppb_id=1, register_num=0x08, ext_register_num=0, first_dword_byte_enable=0xF, transaction_type=0, ld_id=3
+    )
+    req = CciRequest(opcode=cmd.OPCODE, payload=payload.dump())
+    resp = run(cmd._execute(req))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+    assert resp.payload == pack("<I", 0)
+
+
+def test_send_ld_cxl_io_memory_execute(physical_port_manager):
+    cmd = SendLdCxlIoMemoryRequestCommand(physical_port_manager)
+    payload = SendLdCxlIoMemoryRequestPayload(
+        port_id=1, first_dword_byte_enable=0xF, last_dword_byte_enable=0, transaction_type=0, ld_id=2, transaction_length=8, transaction_address=0x10000
+    )
+    req = CciRequest(opcode=cmd.OPCODE, payload=payload.dump())
+    resp = run(cmd._execute(req))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+    assert len(resp.payload) == 12  # 4 bytes header + 8 bytes data
+    assert resp.payload[:2] == pack("<H", 8)
+
 

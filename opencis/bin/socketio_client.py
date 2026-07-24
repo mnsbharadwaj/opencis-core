@@ -419,6 +419,35 @@ async def generate_aer(vcs_id: int, vppb_instance: int, aer_error: int, aer_head
     await sio.disconnect()
 
 
+async def send_ld_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_data: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("ld:sendConfig", {
+        "ppbId": ppb_id,
+        "registerNum": register_num,
+        "extRegisterNum": ext_register_num,
+        "firstDwordByteEnable": first_dword_byte_enable,
+        "transactionType": transaction_type,
+        "ldId": ld_id,
+        "transactionData": transaction_data
+    })
+    await sio.disconnect()
+
+async def send_ld_memory(port_id: int, first_dword_byte_enable: int, last_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_length: int, transaction_address: int, transaction_data_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("ld:sendMemory", {
+        "portId": port_id,
+        "firstDwordByteEnable": first_dword_byte_enable,
+        "lastDwordByteEnable": last_dword_byte_enable,
+        "transactionType": transaction_type,
+        "ldId": ld_id,
+        "transactionLength": transaction_length,
+        "transactionAddress": transaction_address,
+        "transactionData": transaction_data_hex
+    })
+    await sio.disconnect()
+
+
+
 
 
 # Main asynchronous function to start the client

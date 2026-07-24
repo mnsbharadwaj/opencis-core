@@ -497,3 +497,38 @@ def generate_aer(vcs_id: int, vppb_instance: int, aer_error: int, aer_header_hex
     asyncio.run(socketio_client.generate_aer(vcs_id, vppb_instance, aer_error, aer_header_hex))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MLD Port Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="send-ld-config")
+@click.argument("ppb_id", type=BASED_INT)
+@click.argument("register_num", type=BASED_INT)
+@click.argument("ext_register_num", type=BASED_INT)
+@click.argument("first_dword_byte_enable", type=BASED_INT)
+@click.argument("transaction_type", type=BASED_INT)
+@click.argument("ld_id", type=BASED_INT)
+@click.option("--transaction-data", type=BASED_INT, default=0)
+def send_ld_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_data: int):
+    """Send LD CXL.io Config (5301h)."""
+    asyncio.run(socketio_client.send_ld_config(
+        ppb_id, register_num, ext_register_num, first_dword_byte_enable, transaction_type, ld_id, transaction_data
+    ))
+
+@fabric_manager_group.command(name="send-ld-memory")
+@click.argument("port_id", type=BASED_INT)
+@click.argument("first_dword_byte_enable", type=BASED_INT)
+@click.argument("last_dword_byte_enable", type=BASED_INT)
+@click.argument("transaction_type", type=BASED_INT)
+@click.argument("ld_id", type=BASED_INT)
+@click.argument("transaction_length", type=BASED_INT)
+@click.argument("transaction_address", type=BASED_INT)
+@click.option("--transaction-data-hex", type=str, default="")
+def send_ld_memory(port_id: int, first_dword_byte_enable: int, last_dword_byte_enable: int, transaction_type: int, ld_id: int, transaction_length: int, transaction_address: int, transaction_data_hex: str):
+    """Send LD CXL.io Memory Request (5302h)."""
+    asyncio.run(socketio_client.send_ld_memory(
+        port_id, first_dword_byte_enable, last_dword_byte_enable, transaction_type, ld_id, transaction_length, transaction_address, transaction_data_hex
+    ))
+
+
+

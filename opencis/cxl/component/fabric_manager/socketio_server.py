@@ -62,6 +62,12 @@ from opencis.cxl.cci.fabric_manager.virtual_switch import (
     GenerateAerEventRequestPayload,
     GenerateAerEventCommand,
 )
+from opencis.cxl.cci.fabric_manager.mld_port import (
+    SendLdCxlIoConfigurationRequestPayload,
+    SendLdCxlIoConfigurationRequestCommand,
+    SendLdCxlIoMemoryRequestPayload,
+    SendLdCxlIoMemoryRequestCommand,
+)
 
 
 from dataclasses import asdict, is_dataclass
@@ -259,6 +265,9 @@ class FabricManagerSocketIoServer(RunnableComponent):
         # Virtual Switch Commands
         self._register_handler("vcs:generateAer")
 
+        # MLD Port Commands
+        self._register_handler("ld:sendConfig")
+        self._register_handler("ld:sendMemory")
 
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
@@ -348,7 +357,11 @@ class FabricManagerSocketIoServer(RunnableComponent):
             # Virtual Switch Commands
             elif event_type == "vcs:generateAer":
                 response = await self._generate_aer_event(data)
-
+            # MLD Port Commands
+            elif event_type == "ld:sendConfig":
+                response = await self._send_ld_config(data)
+            elif event_type == "ld:sendMemory":
+                response = await self._send_ld_memory(data)
 
             else:
                 response = CommandResponse(error=f"Unknown event: {event_type}")
@@ -1689,5 +1702,47 @@ class FabricManagerSocketIoServer(RunnableComponent):
         if return_code == CCI_RETURN_CODE.SUCCESS:
             return CommandResponse(error="", result="SUCCESS")
         return CommandResponse(error=return_code.name, result=None)
+
+    # MLD Port Command Handlers
+    async def _send_ld_config(self, data) -> CommandResponse:
+        request = SendLdCxlIoConfigurationRequestPayload(
+            ppb_id=data["ppbId"],
+            register_num=data["registerNum"],
+            ext_register_num=data["extRegisterNum"],
+            first_dword_byte_enable=data["firstDwordByteEnable"],
+            transaction_type=data["transactionType"],
+            ld_id=data["ldId"],
+            transaction_data=data.get("transactionData", 0)
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SEND_LD_CXL_IO_CONFIGURATION_REQUEST, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.mld_port import SendLdCxlIoConfigurationResponsePayload
+            parsed = SendLdCxlIoConfigurationResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _send_ld_memory(self, data) -> CommandResponse:
+        data_bytes = bytes.fromhex(data["transactionData"]) if data.get("transactionData") else b""
+        request = SendLdCxlIoMemoryRequestPayload(
+            port_id=data["portId"],
+            first_dword_byte_enable=data["firstDwordByteEnable"],
+            last_dword_byte_enable=data["lastDwordByteEnable"],
+            transaction_type=data["transactionType"],
+            ld_id=data["ldId"],
+            transaction_length=data["transactionLength"],
+            transaction_address=data["transactionAddress"],
+            transaction_data=data_bytes
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SEND_LD_CXL_IO_MEMORY_REQUEST, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.mld_port import SendLdCxlIoMemoryResponsePayload
+            parsed = SendLdCxlIoMemoryResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
 
 

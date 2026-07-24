@@ -458,6 +458,23 @@ async def get_head_info(start_head: int, num_heads: int):
     await sio.disconnect()
 
 
+async def dcd_add_ref(tag_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:addRef", {"tag": tag_hex})
+    await sio.disconnect()
+
+async def dcd_remove_ref(tag_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:removeRef", {"tag": tag_hex})
+    await sio.disconnect()
+
+async def dcd_list_tags(starting_index: int, max_tags: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("dcd:listTags", {"startingIndex": starting_index, "maxTags": max_tags})
+    await sio.disconnect()
+
+
+
 
 
 

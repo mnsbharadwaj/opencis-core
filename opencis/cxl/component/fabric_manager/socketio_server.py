@@ -74,6 +74,13 @@ from opencis.cxl.cci.fabric_manager.multi_headed_devices import (
     GetHeadInfoRequestPayload,
     GetHeadInfoCommand,
 )
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    DynamicCapacityAddReferenceCommand,
+    DynamicCapacityReferenceRequestPayload,
+    DynamicCapacityRemoveReferenceCommand,
+    DynamicCapacityListTagsCommand,
+    DynamicCapacityListTagsRequestPayload,
+)
 
 
 from dataclasses import asdict, is_dataclass
@@ -279,6 +286,12 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("mhd:getInfo")
         self._register_handler("mhd:getHeadInfo")
 
+        # DCD Management Commands
+        self._register_handler("dcd:addRef")
+        self._register_handler("dcd:removeRef")
+        self._register_handler("dcd:listTags")
+
+
 
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
@@ -378,6 +391,14 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._get_multi_headed_info(data)
             elif event_type == "mhd:getHeadInfo":
                 response = await self._get_head_info(data)
+            # DCD Management Commands
+            elif event_type == "dcd:addRef":
+                response = await self._dcd_add_ref(data)
+            elif event_type == "dcd:removeRef":
+                response = await self._dcd_remove_ref(data)
+            elif event_type == "dcd:listTags":
+                response = await self._dcd_list_tags(data)
+
 
 
             else:
@@ -1787,6 +1808,41 @@ class FabricManagerSocketIoServer(RunnableComponent):
             parsed = GetHeadInfoResponsePayload.parse(resp_bytes)
             return CommandResponse(error="", result=to_dict_safe(parsed))
         return CommandResponse(error=return_code.name, result=None)
+
+    # DCD Management Command Handlers
+    async def _dcd_add_ref(self, data) -> CommandResponse:
+        tag_bytes = bytes.fromhex(data["tag"])
+        request = DynamicCapacityReferenceRequestPayload(tag=tag_bytes)
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.DYNAMIC_CAPACITY_ADD_REFERENCE, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _dcd_remove_ref(self, data) -> CommandResponse:
+        tag_bytes = bytes.fromhex(data["tag"])
+        request = DynamicCapacityReferenceRequestPayload(tag=tag_bytes)
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.DYNAMIC_CAPACITY_REMOVE_REFERENCE, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _dcd_list_tags(self, data) -> CommandResponse:
+        request = DynamicCapacityListTagsRequestPayload(
+            starting_index=data["startingIndex"], max_tags=data["maxTags"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.DYNAMIC_CAPACITY_LIST_TAGS, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.dcd_management import DynamicCapacityListTagsResponsePayload
+            parsed = DynamicCapacityListTagsResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
 
 
 

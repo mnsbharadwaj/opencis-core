@@ -82,6 +82,11 @@ from opencis.cxl.cci.fabric_manager.pbr_switch import (
     GetDrtCommand,
     SetDrtCommand,
 )
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    DynamicCapacityAddReferenceCommand,
+    DynamicCapacityRemoveReferenceCommand,
+    DynamicCapacityListTagsCommand,
+)
 from opencis.cxl.cci.fabric_manager.gae import (
     IdentifyGaeCommand,
     GetPidAccessVectorsCommand,
@@ -256,6 +261,10 @@ class CxlSwitch(RunnableComponent):
             # Multi-Headed Device Commands
             GetMultiHeadedInfoCommand(self._physical_port_manager),
             GetHeadInfoCommand(self._physical_port_manager),
+            # DCD Management Commands
+            DynamicCapacityAddReferenceCommand(self._physical_port_manager),
+            DynamicCapacityRemoveReferenceCommand(self._physical_port_manager),
+            DynamicCapacityListTagsCommand(self._physical_port_manager),
         ]
         # Register PBR + GAE commands only if the switch is in PBR mode
         if self._enable_pbr and self._pbr_switch_manager:

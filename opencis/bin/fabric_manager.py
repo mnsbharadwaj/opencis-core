@@ -550,5 +550,30 @@ def get_head_info(start_head: int, num_heads: int):
     asyncio.run(socketio_client.get_head_info(start_head, num_heads))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# DCD Management Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="dcd-add-ref")
+@click.argument("tag_hex", type=str)
+def dcd_add_ref(tag_hex: str):
+    """Dynamic Capacity Add Reference (5606h)."""
+    asyncio.run(socketio_client.dcd_add_ref(tag_hex))
+
+@fabric_manager_group.command(name="dcd-remove-ref")
+@click.argument("tag_hex", type=str)
+def dcd_remove_ref(tag_hex: str):
+    """Dynamic Capacity Remove Reference (5607h)."""
+    asyncio.run(socketio_client.dcd_remove_ref(tag_hex))
+
+@fabric_manager_group.command(name="dcd-list-tags")
+@click.argument("starting_index", type=BASED_INT)
+@click.argument("max_tags", type=BASED_INT)
+def dcd_list_tags(starting_index: int, max_tags: int):
+    """Dynamic Capacity List Tags (5608h)."""
+    asyncio.run(socketio_client.dcd_list_tags(starting_index, max_tags))
+
+
+
 
 

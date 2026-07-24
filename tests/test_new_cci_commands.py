@@ -49,6 +49,18 @@ from opencis.cxl.cci.fabric_manager.multi_headed_devices import (
     GetHeadInfoRequestPayload,
 )
 
+# Import DCD Management Commands
+from opencis.cxl.cci.fabric_manager.dcd_management import (
+    DynamicCapacityAddReferenceCommand,
+    DynamicCapacityReferenceRequestPayload,
+    DynamicCapacityRemoveReferenceCommand,
+    DynamicCapacityListTagsCommand,
+    DynamicCapacityListTagsRequestPayload,
+    helper_inject_extent,
+)
+from opencis.cxl.device.config.dynamic_capacity_device import DynamicCapacityExtent
+
+
 
 def run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
@@ -232,6 +244,38 @@ def test_multi_headed_device_execute(physical_port_manager):
     req = CciRequest(opcode=cmd_head.OPCODE, payload=req_head_payload.dump())
     resp = run(cmd_head._execute(req))
     assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+
+
+# ===========================================================================
+# DCD Management Command Set Tests
+# ===========================================================================
+
+def test_dc_region_reference_execute(physical_port_manager):
+    cmd_add = DynamicCapacityAddReferenceCommand(physical_port_manager)
+    cmd_remove = DynamicCapacityRemoveReferenceCommand(physical_port_manager)
+    cmd_list = DynamicCapacityListTagsCommand(physical_port_manager)
+
+    tag = uuid4().bytes
+
+    # Add reference
+    req_add = CciRequest(opcode=cmd_add.OPCODE, payload=DynamicCapacityReferenceRequestPayload(tag).dump())
+    resp = run(cmd_add._execute(req_add))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+
+    # List Tags
+    req_list = CciRequest(opcode=cmd_list.OPCODE, payload=DynamicCapacityListTagsRequestPayload(starting_index=0, max_tags=10).dump())
+    resp = run(cmd_list._execute(req_list))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+
+    # Inject mock extent for Host 0
+    ext = DynamicCapacityExtent(start_dpa=0x10000000, length=0x1000000, tag=int.from_bytes(tag, "big"), shared_extent_seq=1)
+    helper_inject_extent(host_id=0, extent=ext)
+
+    # Remove reference
+    req_remove = CciRequest(opcode=cmd_remove.OPCODE, payload=DynamicCapacityReferenceRequestPayload(tag).dump())
+    resp = run(cmd_remove._execute(req_remove))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+
 
 
 

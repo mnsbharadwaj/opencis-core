@@ -531,4 +531,24 @@ def send_ld_memory(port_id: int, first_dword_byte_enable: int, last_dword_byte_e
     ))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Multi-Headed Device Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="get-mhd-info")
+@click.argument("start_ld_id", type=BASED_INT)
+@click.argument("ld_map_list_limit", type=BASED_INT)
+def get_mhd_info(start_ld_id: int, ld_map_list_limit: int):
+    """Get Multi-Headed Info (5501h)."""
+    asyncio.run(socketio_client.get_mhd_info(start_ld_id, ld_map_list_limit))
+
+@fabric_manager_group.command(name="get-head-info")
+@click.argument("start_head", type=BASED_INT)
+@click.argument("num_heads", type=BASED_INT)
+def get_head_info(start_head: int, num_heads: int):
+    """Get Head Info (5502h)."""
+    asyncio.run(socketio_client.get_head_info(start_head, num_heads))
+
+
+
 

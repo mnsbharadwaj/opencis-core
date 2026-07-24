@@ -447,6 +447,18 @@ async def send_ld_memory(port_id: int, first_dword_byte_enable: int, last_dword_
     await sio.disconnect()
 
 
+async def get_mhd_info(start_ld_id: int, ld_map_list_limit: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("mhd:getInfo", {"startLdId": start_ld_id, "ldMapListLimit": ld_map_list_limit})
+    await sio.disconnect()
+
+async def get_head_info(start_head: int, num_heads: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("mhd:getHeadInfo", {"startHead": start_head, "numHeads": num_heads})
+    await sio.disconnect()
+
+
+
 
 
 

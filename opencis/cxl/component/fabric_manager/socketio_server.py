@@ -68,6 +68,12 @@ from opencis.cxl.cci.fabric_manager.mld_port import (
     SendLdCxlIoMemoryRequestPayload,
     SendLdCxlIoMemoryRequestCommand,
 )
+from opencis.cxl.cci.fabric_manager.multi_headed_devices import (
+    GetMultiHeadedInfoRequestPayload,
+    GetMultiHeadedInfoCommand,
+    GetHeadInfoRequestPayload,
+    GetHeadInfoCommand,
+)
 
 
 from dataclasses import asdict, is_dataclass
@@ -269,6 +275,11 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("ld:sendConfig")
         self._register_handler("ld:sendMemory")
 
+        # Multi-Headed Device Commands
+        self._register_handler("mhd:getInfo")
+        self._register_handler("mhd:getHeadInfo")
+
+
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
     def _register_handler(self, event):
@@ -362,6 +373,12 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._send_ld_config(data)
             elif event_type == "ld:sendMemory":
                 response = await self._send_ld_memory(data)
+            # Multi-Headed Device Commands
+            elif event_type == "mhd:getInfo":
+                response = await self._get_multi_headed_info(data)
+            elif event_type == "mhd:getHeadInfo":
+                response = await self._get_head_info(data)
+
 
             else:
                 response = CommandResponse(error=f"Unknown event: {event_type}")
@@ -1743,6 +1760,34 @@ class FabricManagerSocketIoServer(RunnableComponent):
             parsed = SendLdCxlIoMemoryResponsePayload.parse(resp_bytes)
             return CommandResponse(error="", result=to_dict_safe(parsed))
         return CommandResponse(error=return_code.name, result=None)
+
+    # Multi-Headed Device Command Handlers
+    async def _get_multi_headed_info(self, data) -> CommandResponse:
+        request = GetMultiHeadedInfoRequestPayload(
+            start_ld_id=data["startLdId"], ld_map_list_limit=data["ldMapListLimit"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_MULTI_HEADED_INFO, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.multi_headed_devices import GetMultiHeadedInfoResponsePayload
+            parsed = GetMultiHeadedInfoResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_head_info(self, data) -> CommandResponse:
+        request = GetHeadInfoRequestPayload(
+            start_head=data["startHead"], num_heads=data["numHeads"]
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_HEAD_INFO, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.multi_headed_devices import GetHeadInfoResponsePayload
+            parsed = GetHeadInfoResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
 
 
 

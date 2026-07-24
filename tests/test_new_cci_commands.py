@@ -41,6 +41,13 @@ from opencis.cxl.cci.fabric_manager.mld_port import (
     SendLdCxlIoMemoryRequestCommand,
     SendLdCxlIoMemoryRequestPayload,
 )
+# Import Multi-Headed Device Commands
+from opencis.cxl.cci.fabric_manager.multi_headed_devices import (
+    GetMultiHeadedInfoCommand,
+    GetMultiHeadedInfoRequestPayload,
+    GetHeadInfoCommand,
+    GetHeadInfoRequestPayload,
+)
 
 
 def run(coro):
@@ -204,5 +211,27 @@ def test_send_ld_cxl_io_memory_execute(physical_port_manager):
     assert resp.return_code == CCI_RETURN_CODE.SUCCESS
     assert len(resp.payload) == 12  # 4 bytes header + 8 bytes data
     assert resp.payload[:2] == pack("<H", 8)
+
+
+# ===========================================================================
+# Multi-Headed Device Command Set Tests
+# ===========================================================================
+
+def test_multi_headed_device_execute(physical_port_manager):
+    cmd_info = GetMultiHeadedInfoCommand(physical_port_manager)
+    cmd_head = GetHeadInfoCommand(physical_port_manager)
+
+    # Get Multi-Headed Info
+    req_payload = GetMultiHeadedInfoRequestPayload(start_ld_id=2, ld_map_list_limit=6)
+    req = CciRequest(opcode=cmd_info.OPCODE, payload=req_payload.dump())
+    resp = run(cmd_info._execute(req))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+    
+    # Get Head Info
+    req_head_payload = GetHeadInfoRequestPayload(start_head=1, num_heads=2)
+    req = CciRequest(opcode=cmd_head.OPCODE, payload=req_head_payload.dump())
+    resp = run(cmd_head._execute(req))
+    assert resp.return_code == CCI_RETURN_CODE.SUCCESS
+
 
 

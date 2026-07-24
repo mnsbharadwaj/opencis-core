@@ -45,6 +45,12 @@ from opencis.cxl.cci.fabric_manager.mld_components import (
 from opencis.cxl.cci.fabric_manager.physical_switch import (
     IdentifySwitchDeviceCommand,
     GetPhysicalPortStateCommand,
+    PhysicalPortControlCommand,
+    SendPpbCxlIoConfigurationRequestCommand,
+    GetDomainValidationSvStateCommand,
+    SetDomainValidationSvCommand,
+    GetVcsDomainValidationSvStateCommand,
+    GetDomainValidationSvCommand,
 )
 from opencis.cxl.cci.fabric_manager.virtual_switch import (
     GetVirtualCxlSwitchInfoCommand,
@@ -226,6 +232,13 @@ class CxlSwitch(RunnableComponent):
             FreezeVppbCommand(self._virtual_switch_manager),
             UnfreezeVppbCommand(self._virtual_switch_manager),
             SetLdAllocationsCommand(self._virtual_switch_manager),
+            # Physical Switch Commands
+            PhysicalPortControlCommand(self._physical_port_manager),
+            SendPpbCxlIoConfigurationRequestCommand(self._physical_port_manager),
+            GetDomainValidationSvStateCommand(self._virtual_switch_manager),
+            SetDomainValidationSvCommand(self._virtual_switch_manager),
+            GetVcsDomainValidationSvStateCommand(self._virtual_switch_manager),
+            GetDomainValidationSvCommand(self._virtual_switch_manager),
         ]
         # Register PBR + GAE commands only if the switch is in PBR mode
         if self._enable_pbr and self._pbr_switch_manager:

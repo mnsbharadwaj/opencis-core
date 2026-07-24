@@ -39,7 +39,49 @@ from opencis.cxl.component.pbr_switch_manager import DrtEntry, DrtEntryType
 from opencis.cxl.cci.common import (
     CCI_VENDOR_SPECIFIC_OPCODE,
     get_opcode_string,
+    CCI_FM_API_COMMAND_OPCODE,
+    CCI_RETURN_CODE,
 )
+
+# Physical Switch Command imports
+from opencis.cxl.cci.fabric_manager.physical_switch import (
+    PhysicalPortControlRequestPayload,
+    PhysicalPortControlCommand,
+    SendPpbCxlIoConfigurationRequestPayload,
+    SendPpbCxlIoConfigurationRequestCommand,
+    SendPpbCxlIoConfigurationResponsePayload,
+    GetDomainValidationSvStateCommand,
+    SetDomainValidationSvCommand,
+    GetVcsDomainValidationSvStateCommand,
+    GetDomainValidationSvCommand,
+    SetDomainValidationSvRequestPayload,
+    GetVcsDomainValidationSvStateRequestPayload,
+    GetDomainValidationSvRequestPayload,
+)
+
+from dataclasses import asdict, is_dataclass
+
+def to_dict_safe(obj):
+    if is_dataclass(obj):
+        data = asdict(obj)
+    elif isinstance(obj, dict):
+        data = obj
+    elif isinstance(obj, list):
+        data = [to_dict_safe(x) for x in obj]
+    else:
+        return obj
+
+    def clean_bytes(d):
+        if isinstance(d, dict):
+            return {k: clean_bytes(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [clean_bytes(x) for x in d]
+        elif isinstance(d, bytes):
+            return d.hex()
+        return d
+
+    return clean_bytes(data)
+
 from opencis.cxl.transport.cci_packets import CciMessagePacket
 
 
@@ -200,6 +242,15 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("gae:proxyGfdMgmt")
         self._register_handler("gae:getProxyStatus")
         self._register_handler("gae:cancelProxy")
+
+        # Physical Switch Commands
+        self._register_handler("port:control")
+        self._register_handler("port:sendPpbConfig")
+        self._register_handler("domain:getValState")
+        self._register_handler("domain:setVal")
+        self._register_handler("domain:getVcsValState")
+        self._register_handler("domain:getVal")
+
         self._mctp_client.register_notification_handler(self._handle_notifications)
 
     def _register_handler(self, event):
@@ -272,6 +323,20 @@ class FabricManagerSocketIoServer(RunnableComponent):
                 response = await self._gae_get_proxy_status(data)
             elif event_type == "gae:cancelProxy":
                 response = await self._gae_cancel_proxy(data)
+            # Physical Switch Commands
+            elif event_type == "port:control":
+                response = await self._port_control(data)
+            elif event_type == "port:sendPpbConfig":
+                response = await self._send_ppb_config(data)
+            elif event_type == "domain:getValState":
+                response = await self._get_domain_validation_state()
+            elif event_type == "domain:setVal":
+                response = await self._set_domain_validation_sv(data)
+            elif event_type == "domain:getVcsValState":
+                response = await self._get_vcs_domain_validation_sv_state(data)
+            elif event_type == "domain:getVal":
+                response = await self._get_domain_validation_sv(data)
+
             else:
                 response = CommandResponse(error=f"Unknown event: {event_type}")
             logger.info(self._create_message(f"Response: {pformat(response)}"))
@@ -1526,3 +1591,73 @@ class FabricManagerSocketIoServer(RunnableComponent):
         except Exception as e:
             logger.error(self._create_message(f"Error during startup Get LD Info calls: {e}"))
             # Don't fail the entire startup process if this fails
+
+    # Physical Switch Command Handlers
+    async def _port_control(self, data) -> CommandResponse:
+        request = PhysicalPortControlRequestPayload(ppb_id=data["ppbId"], port_opcode=data["portOpcode"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.PHYSICAL_PORT_CONTROL, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _send_ppb_config(self, data) -> CommandResponse:
+        request = SendPpbCxlIoConfigurationRequestPayload(
+            ppb_id=data["ppbId"],
+            register_num=data["registerNum"],
+            ext_register_num=data["extRegisterNum"],
+            first_dword_byte_enable=data["firstDwordByteEnable"],
+            transaction_type=data["transactionType"],
+            transaction_data=data.get("transactionData", 0)
+        )
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SEND_PPB_CXL_IO_CONFIGURATION_REQUEST, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            parsed = SendPpbCxlIoConfigurationResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_domain_validation_state(self) -> CommandResponse:
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_DOMAIN_VALIDATION_SV_STATE, b""
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.physical_switch.domain_validation import GetDomainValidationSvStateResponsePayload
+            parsed = GetDomainValidationSvStateResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _set_domain_validation_sv(self, data) -> CommandResponse:
+        secret_bytes = bytes.fromhex(data["secretValue"])
+        request = SetDomainValidationSvRequestPayload(secret_value=secret_bytes)
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.SET_DOMAIN_VALIDATION_SV, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            return CommandResponse(error="", result="SUCCESS")
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_vcs_domain_validation_sv_state(self, data) -> CommandResponse:
+        request = GetVcsDomainValidationSvStateRequestPayload(vcs_id=data["vcsId"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_VCS_DOMAIN_VALIDATION_SV_STATE, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.physical_switch.domain_validation import GetVcsDomainValidationSvStateResponsePayload
+            parsed = GetVcsDomainValidationSvStateResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+
+    async def _get_domain_validation_sv(self, data) -> CommandResponse:
+        request = GetDomainValidationSvRequestPayload(vcs_id=data["vcsId"])
+        (return_code, resp_bytes, _) = await self._mctp_client.send_raw_cci(
+            CCI_FM_API_COMMAND_OPCODE.GET_DOMAIN_VALIDATION_SV, request.dump()
+        )
+        if return_code == CCI_RETURN_CODE.SUCCESS:
+            from opencis.cxl.cci.fabric_manager.physical_switch.domain_validation import GetDomainValidationSvResponsePayload
+            parsed = GetDomainValidationSvResponsePayload.parse(resp_bytes)
+            return CommandResponse(error="", result=to_dict_safe(parsed))
+        return CommandResponse(error=return_code.name, result=None)
+

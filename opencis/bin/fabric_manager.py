@@ -433,3 +433,52 @@ def gae_cancel_proxy(thread_id: int):
         fm gae-cancel-proxy 1
     """
     asyncio.run(socketio_client.gae_cancel_proxy(thread_id))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Physical Switch Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@fabric_manager_group.command(name="port-control")
+@click.argument("ppb_id", type=BASED_INT)
+@click.argument("port_opcode", type=BASED_INT)
+def port_control(ppb_id: int, port_opcode: int):
+    """Physical Port Control (5102h)."""
+    asyncio.run(socketio_client.port_control(ppb_id, port_opcode))
+
+@fabric_manager_group.command(name="send-ppb-config")
+@click.argument("ppb_id", type=BASED_INT)
+@click.argument("register_num", type=BASED_INT)
+@click.argument("ext_register_num", type=BASED_INT)
+@click.argument("first_dword_byte_enable", type=BASED_INT)
+@click.argument("transaction_type", type=BASED_INT)
+@click.option("--transaction-data", type=BASED_INT, default=0)
+def send_ppb_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, transaction_data: int):
+    """Send PPB CXL.io Config (5103h)."""
+    asyncio.run(socketio_client.send_ppb_config(
+        ppb_id, register_num, ext_register_num, first_dword_byte_enable, transaction_type, transaction_data
+    ))
+
+@fabric_manager_group.command(name="get-domain-val-state")
+def get_domain_val_state():
+    """Get Domain Validation SV State (5104h)."""
+    asyncio.run(socketio_client.get_domain_val_state())
+
+@fabric_manager_group.command(name="set-domain-val")
+@click.argument("secret_value_hex", type=str)
+def set_domain_val(secret_value_hex: str):
+    """Set Domain Validation SV (5105h)."""
+    asyncio.run(socketio_client.set_domain_val(secret_value_hex))
+
+@fabric_manager_group.command(name="get-vcs-domain-val-state")
+@click.argument("vcs_id", type=BASED_INT)
+def get_vcs_domain_val_state(vcs_id: int):
+    """Get VCS Domain Validation SV State (5106h)."""
+    asyncio.run(socketio_client.get_vcs_domain_val_state(vcs_id))
+
+@fabric_manager_group.command(name="get-domain-val")
+@click.argument("vcs_id", type=BASED_INT)
+def get_domain_val(vcs_id: int):
+    """Get Domain Validation SV (5107h)."""
+    asyncio.run(socketio_client.get_domain_val(vcs_id))
+

@@ -369,6 +369,46 @@ async def gae_cancel_proxy(thread_id: int):
     await sio.disconnect()
 
 
+# Physical Switch socketio client methods
+async def port_control(ppb_id: int, port_opcode: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("port:control", {"ppbId": ppb_id, "portOpcode": port_opcode})
+    await sio.disconnect()
+
+async def send_ppb_config(ppb_id: int, register_num: int, ext_register_num: int, first_dword_byte_enable: int, transaction_type: int, transaction_data: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("port:sendPpbConfig", {
+        "ppbId": ppb_id,
+        "registerNum": register_num,
+        "extRegisterNum": ext_register_num,
+        "firstDwordByteEnable": first_dword_byte_enable,
+        "transactionType": transaction_type,
+        "transactionData": transaction_data
+    })
+    await sio.disconnect()
+
+async def get_domain_val_state():
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:getValState", {})
+    await sio.disconnect()
+
+async def set_domain_val(secret_value_hex: str):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:setVal", {"secretValue": secret_value_hex})
+    await sio.disconnect()
+
+async def get_vcs_domain_val_state(vcs_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:getVcsValState", {"vcsId": vcs_id})
+    await sio.disconnect()
+
+async def get_domain_val(vcs_id: int):
+    await sio.connect("http://0.0.0.0:8200")
+    await send("domain:getVal", {"vcsId": vcs_id})
+    await sio.disconnect()
+
+
+
 # Main asynchronous function to start the client
 async def start_client():
     await sio.connect("http://0.0.0.0:8200")

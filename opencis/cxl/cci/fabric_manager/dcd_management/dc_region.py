@@ -312,7 +312,7 @@ class GetDCRegionExtentListsRequestPayload:
     host_id: int = 0
     region_block_size: int = 0
     flags: int = 0
-    pack_mask: str = "<H2sIII"
+    pack_mask: str = "<H2sII"
 
     @classmethod
     def parse(cls, data: bytes) -> "GetDCRegionExtentListsRequestPayload":
@@ -417,7 +417,7 @@ class GetDCRegionExtentListsResponsePayload:
                 extent.shared_extent_seq,
                 b"\x00" * 6,
             )
-            return data
+        return data
 
     def get_pretty_print(self) -> str:
         return (

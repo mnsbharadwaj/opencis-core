@@ -31,7 +31,7 @@ class InitiateDynamicCapacityAddRequestPayload:
     length: int = 0
     tag: int = 0
     ext_count: int = 0
-    pack_mask: str = "<HBBQ10sI"
+    pack_mask: str = "<HBBQQQI"
     extent_mask: str = "<QQQQH6s"
     dc_extents: list[DynamicCapacityExtent] = None
 

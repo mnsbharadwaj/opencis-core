@@ -237,8 +237,8 @@ class TunnelManagementResponsePayload:
         if len(data) != response_size + 4:
             raise ValueError("Provided bytes object does not match the expected data size.")
         return cls(
-            response_size,
-            payload,
+            response_size=response_size,
+            payload=payload,
         )
 
     def dump(self) -> bytes:

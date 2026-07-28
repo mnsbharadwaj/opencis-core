@@ -24,6 +24,13 @@ class GetLdAllocationsRequestPayloadDict(TypedDict):
 
 @dataclass
 class GetLdAllocationsRequestPayload:
+    """Get LD Allocations Request Payload per CXL Spec (opcode 5401h).
+
+    Wire format (2 bytes):
+        Byte [0] - Start LD ID (1 byte)
+        Byte [1] - LD Allocation List Limit (1 byte)
+    """
+
     start_ld_id: int = field(default=0)  # 1byte
     ld_allocation_list_limit: int = field(default=0)  # 1byte
 
@@ -61,23 +68,25 @@ class GetLdAllocationsResponsePayloadDict(TypedDict):
     startLdId: int
     ldAllocationListLength: int
     ldAllocationList: List[int]
-    totalCapacity: int
-    maxCapacity: int
-    deviceCapacity: int
-    remainingCapacity: int
 
 
 @dataclass
 class GetLdAllocationsResponsePayload:
+    """Get LD Allocations Response Payload per CXL Spec (opcode 5401h).
+
+    Wire format (4 + N*8 bytes):
+        Byte  [0]    - Number of LDs (1 byte)
+        Byte  [1]    - Memory Granularity (1 byte)
+        Byte  [2]    - Start LD ID (1 byte)
+        Byte  [3]    - LD Allocation List Length (1 byte)
+        Bytes [4:..]  - LD Allocation List (variable, 8 bytes per entry LE)
+    """
+
     number_of_lds: int = field(default=0)  # 1byte
     memory_granularity: int = field(default=0)  # 1byte
     start_ld_id: int = field(default=0)  # 1byte
     ld_allocation_list_length: int = field(default=0)  # 1byte
     ld_allocation_list: List[int] = field(default_factory=list)
-    total_capacity: int = field(default=0)  # Total capacity in bytes
-    max_capacity: int = field(default=0)  # Maximum capacity in bytes
-    device_capacity: int = field(default=0)  # Device capacity in bytes
-    remaining_capacity: int = field(default=0)  # Remaining capacity in bytes
 
     @classmethod
     def parse(cls, data: bytes):
@@ -88,7 +97,6 @@ class GetLdAllocationsResponsePayload:
         memory_granularity = data[1]
         start_ld_id = data[2]
         ld_allocation_list_length = data[3]
-        ld_allocation_list = data[4:]
         ld_allocation_list = [
             int.from_bytes(data[4:][i : i + 8], "little") for i in range(0, len(data[4:]), 8)
         ]
@@ -118,10 +126,6 @@ class GetLdAllocationsResponsePayload:
             f"- Start LD ID: {self.start_ld_id}\n"
             f"- LD Allocation List Length: {self.ld_allocation_list_length}\n"
             f"- LD Allocation List: {self.ld_allocation_list}\n"
-            f"- Total Capacity: {self.total_capacity}\n"
-            f"- Max Capacity: {self.max_capacity}\n"
-            f"- Device Capacity: {self.device_capacity}\n"
-            f"- Remaining Capacity: {self.remaining_capacity}\n"
         )
 
     def to_dict(self) -> GetLdAllocationsResponsePayloadDict:
@@ -131,10 +135,6 @@ class GetLdAllocationsResponsePayload:
             "startLdId": self.start_ld_id,
             "ldAllocationListLength": self.ld_allocation_list_length,
             "ldAllocationList": self.ld_allocation_list,
-            "totalCapacity": self.total_capacity,
-            "maxCapacity": self.max_capacity,
-            "deviceCapacity": self.device_capacity,
-            "remainingCapacity": self.remaining_capacity,
         }
 
 

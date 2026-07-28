@@ -40,6 +40,7 @@ from opencis.cxl.cci.generic.information_and_status import (
     BackgroundOperationStatusCommand,
 )
 from opencis.cxl.cci.fabric_manager.mld_components import (
+    GetLdInfoCommand,
     SetLdAllocationsCommand,
 )
 from opencis.cxl.cci.fabric_manager.physical_switch import (
@@ -245,6 +246,7 @@ class CxlSwitch(RunnableComponent):
             GetConnectedDevicesCommand(self._physical_port_manager),
             FreezeVppbCommand(self._virtual_switch_manager),
             UnfreezeVppbCommand(self._virtual_switch_manager),
+            GetLdInfoCommand(self._virtual_switch_manager),
             SetLdAllocationsCommand(self._virtual_switch_manager),
             # Physical Switch Commands
             PhysicalPortControlCommand(self._physical_port_manager),

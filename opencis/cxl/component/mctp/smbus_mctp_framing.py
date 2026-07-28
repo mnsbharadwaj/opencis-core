@@ -52,12 +52,14 @@ MCTP_MSG_TYPE_VENDOR    = 0x7F       # Vendor-defined
 # Sizes derived from fields.py bit layout
 SMBUS_REQ_HDR_SIZE  = 9   # dest_addr(1)+cmd(1)+byte_count(1)+src_addr(1)+mctp_hdr(4)+msg_type(1)
 SMBUS_RSP_HDR_SIZE  = 7   # byte_count(1)+src_addr(1)+mctp_hdr(4)+msg_type(1)
-CCI_MSG_HDR_SIZE    = 12  # From CciMessageHeader in fields.py (96 bits = 12 bytes)
+CCI_REQ_HDR_SIZE    = 8   # CCI Request header is 8 bytes (no return code or vendor status)
+CCI_RSP_HDR_SIZE    = 12  # CCI Response header is 12 bytes
+CCI_MSG_HDR_SIZE    = 12  # Keep for backwards compatibility
 PEC_SIZE            = 1
 
 # Minimum valid frame lengths
-SMBUS_REQ_MIN_LEN = SMBUS_REQ_HDR_SIZE + CCI_MSG_HDR_SIZE + PEC_SIZE  # 22 bytes
-SMBUS_RSP_MIN_LEN = SMBUS_RSP_HDR_SIZE + CCI_MSG_HDR_SIZE + PEC_SIZE  # 20 bytes
+SMBUS_REQ_MIN_LEN = SMBUS_REQ_HDR_SIZE + CCI_REQ_HDR_SIZE + PEC_SIZE  # 18 bytes
+SMBUS_RSP_MIN_LEN = SMBUS_RSP_HDR_SIZE + CCI_RSP_HDR_SIZE + PEC_SIZE  # 20 bytes
 
 
 # ── CRC-8 (SMBus PEC, polynomial 0x07) ────────────────────────────────────────
@@ -222,17 +224,17 @@ class SmbusMctpRequest:
         cci_bytes = raw[SMBUS_REQ_HDR_SIZE : -PEC_SIZE]
         pec       = raw[-1]
 
-        if len(cci_bytes) < CCI_MSG_HDR_SIZE:
+        if len(cci_bytes) < CCI_REQ_HDR_SIZE:
             raise ValueError(
                 f"CCI message too short: {len(cci_bytes)} bytes "
-                f"(minimum {CCI_MSG_HDR_SIZE})"
+                f"(minimum {CCI_REQ_HDR_SIZE})"
             )
 
-        cci_hdr      = cci_bytes[:CCI_MSG_HDR_SIZE]
+        cci_hdr      = cci_bytes[:CCI_REQ_HDR_SIZE]
         cci_opcode   = _cci_get_opcode(cci_hdr)
         cci_tag      = _cci_get_tag(cci_hdr)
         cci_plen     = _cci_get_payload_length(cci_hdr)
-        cci_payload  = cci_bytes[CCI_MSG_HDR_SIZE : CCI_MSG_HDR_SIZE + cci_plen]
+        cci_payload  = cci_bytes[CCI_REQ_HDR_SIZE : CCI_REQ_HDR_SIZE + cci_plen]
 
         # ── PEC verification ──────────────────────────────────────────
         expected_pec = crc8_smbus(raw[:-1])

@@ -116,6 +116,12 @@ def fm_unfreeze(vcs: int, vppb: int):
     asyncio.run(socketio_client.unfreeze(vcs, vppb))
 
 
+@fabric_manager_group.command(name="identify-switch")
+def identify_switch():
+    """Identify CXL Switch.  Usage: fm identify-switch"""
+    asyncio.run(socketio_client.identify_switch())
+
+
 @fabric_manager_group.command(name="get-vcs")
 def get_vcs():
     """Get Virtual CXL Switch info.  Usage: fm get-vcs"""

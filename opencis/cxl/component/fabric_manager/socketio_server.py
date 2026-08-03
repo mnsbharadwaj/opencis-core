@@ -268,6 +268,7 @@ class FabricManagerSocketIoServer(RunnableComponent):
         self._register_handler("gae:cancelProxy")
 
         # Physical Switch Commands
+        self._register_handler("switch:identify")
         self._register_handler("port:control")
         self._register_handler("port:sendPpbConfig")
         self._register_handler("domain:getValState")
@@ -366,6 +367,8 @@ class FabricManagerSocketIoServer(RunnableComponent):
             elif event_type == "gae:cancelProxy":
                 response = await self._gae_cancel_proxy(data)
             # Physical Switch Commands
+            elif event_type == "switch:identify":
+                response = await self._identify_switch()
             elif event_type == "port:control":
                 response = await self._port_control(data)
             elif event_type == "port:sendPpbConfig":
@@ -406,6 +409,26 @@ class FabricManagerSocketIoServer(RunnableComponent):
             logger.info(self._create_message(f"Response: {pformat(response)}"))
             logger.debug(self._create_message("Completed SocketIO Request"))
             return response
+
+    async def _identify_switch(self) -> CommandResponse:
+        try:
+            switch_identity = await self._get_switch_identity()
+            if switch_identity:
+                return CommandResponse(error="", result={
+                    "ingressPortId": switch_identity.ingress_port_id,
+                    "numPhysicalPorts": switch_identity.num_physical_ports,
+                    "numVcss": switch_identity.num_vcss,
+                    "activeVcsIdList": switch_identity.active_vcs_id_list,
+                    "totalVppbs": switch_identity.total_vppbs,
+                    "activeVcsVppbList": switch_identity.active_vcs_vppb_list,
+                    "numDrts": switch_identity.num_drts,
+                    "numRgts": switch_identity.num_rgts,
+                    "numDecoders": switch_identity.num_decoders,
+                    "maxSupportedMsgSize": switch_identity.max_supported_msg_size,
+                })
+            return CommandResponse(error="FAILED")
+        except Exception as e:
+            return CommandResponse(error=str(e))
 
     async def _get_switch_identity(self) -> IdentifySwitchDeviceResponsePayload:
         if self._switch_identity is None:

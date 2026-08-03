@@ -83,6 +83,14 @@ async def get_port():
     await sio.disconnect()
 
 
+async def identify_switch():
+    await sio.connect("http://0.0.0.0:8200")
+    await send(
+        "switch:identify",
+    )
+    await sio.disconnect()
+
+
 async def get_vcs():
     await sio.connect("http://0.0.0.0:8200")
     await send(

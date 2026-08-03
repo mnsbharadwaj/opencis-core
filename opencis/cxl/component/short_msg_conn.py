@@ -183,7 +183,9 @@ class ShortMsgConn(RunnableComponent):
         info = f"host sending to device {device}"
         if not self._server:
             info = f"device {self._device_id} sending to host"
-        logger.debug(self._create_message(info))
+        if device not in self._connections:
+            logger.warning(self._create_message(f"Device {device} not connected. Skipping IRQ request."))
+            return
         _, writer = self._connections[device]
         val_w_dev_id = request.real_val << 8 | self._device_id
         writer.write(val_w_dev_id.to_bytes(length=self._msg_width))

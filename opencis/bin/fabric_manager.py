@@ -116,6 +116,12 @@ def fm_unfreeze(vcs: int, vppb: int):
     asyncio.run(socketio_client.unfreeze(vcs, vppb))
 
 
+@fabric_manager_group.command(name="get-vcs")
+def get_vcs():
+    """Get Virtual CXL Switch info.  Usage: fm get-vcs"""
+    asyncio.run(socketio_client.get_vcs())
+
+
 @fabric_manager_group.command(name="get-ld-info")
 @click.argument("port_index", nargs=1, type=BASED_INT)
 def get_ld_info(port_index: int):

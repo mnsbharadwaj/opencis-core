@@ -89,7 +89,7 @@ TEST_CASES: List[CommandTestCase] = [
 ]
 
 def run_tests():
-    host, port = "127.0.0.1", 8300
+    host, port = "127.0.0.1", 8301
     print(f"Connecting to SMBus server at {host}:{port}...")
     
     results = []
@@ -103,21 +103,24 @@ def run_tests():
                 s.settimeout(3.0)
                 s.connect((host, port))
                 
-                # Encapsulate with 4-byte OpenCIS bridge system header
-                s.sendall(struct.pack("<HH", 0x01, len(req_frame)) + req_frame)
+                # Send raw SMBus packet directly
+                s.sendall(req_frame)
                 
-                # Receive Response
-                sys_hdr = s.recv(4)
-                if not sys_hdr or len(sys_hdr) < 4:
-                    print("  -> Fail: Connection closed or header incomplete")
+                # Receive Response: first 3 bytes are dest_slave_addr, command_code, byte_count
+                smbus_hdr = s.recv(3)
+                if not smbus_hdr or len(smbus_hdr) < 3:
+                    print("  -> Fail: Connection closed or SMBus header incomplete")
                     results.append((tc.name, "NO_RESPONSE"))
                     continue
                 
-                _, resp_len = struct.unpack("<HH", sys_hdr)
-                resp_data = s.recv(resp_len)
+                byte_count = smbus_hdr[2]
+                # remaining bytes: byte_count data bytes + 1 PEC byte
+                remaining = s.recv(byte_count + 1)
+                resp_data = smbus_hdr + remaining
                 
                 # Parse response
-                # SMBus response header is 7 bytes, CCI header is 12 bytes
+                # SMBus response header is 7 bytes (dest_addr, cmd, count, src_addr, mctp_hdr[4], msg_type[1])
+                # CCI response header is 12 bytes
                 if len(resp_data) < 20:
                     print(f"  -> Fail: Response packet too short ({len(resp_data)} bytes)")
                     results.append((tc.name, "BAD_RESPONSE_FORMAT"))

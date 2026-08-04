@@ -14,6 +14,15 @@ def crc8_smbus(data: bytes) -> int:
                 crc = (crc << 1) & 0xFF
     return crc
 
+def recv_exactly(s: socket.socket, n: int) -> bytes:
+    data = b""
+    while len(data) < n:
+        packet = s.recv(n - len(data))
+        if not packet:
+            break
+        data += packet
+    return data
+
 def make_smbus_packet(opcode: int, payload: bytes = b"", tag: int = 0) -> bytes:
     # 8-byte CCI Header
     cci_hdr = struct.pack("<BBBH3s", 0x00, tag, 0x00, opcode, struct.pack("<I", len(payload))[:3])
@@ -98,25 +107,26 @@ def run_tests():
         print(f"\n[{i+1}/{len(TEST_CASES)}] Testing: {tc.name} (Opcode 0x{tc.opcode:04X})")
         req_frame = make_smbus_packet(tc.opcode, tc.payload, tag=i % 8)
         
+        timeout_val = 0.5 if tc.opcode == 0x5400 else 3.0
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(3.0)
+                s.settimeout(timeout_val)
                 s.connect((host, port))
                 
                 # Send raw SMBus packet directly
                 s.sendall(req_frame)
                 
-                # Receive Response: first 3 bytes are dest_slave_addr, command_code, byte_count
-                smbus_hdr = s.recv(3)
-                if not smbus_hdr or len(smbus_hdr) < 3:
-                    print("  -> Fail: Connection closed or SMBus header incomplete")
+                # Receive Response: first byte is byte_count
+                byte_count_buf = recv_exactly(s, 1)
+                if not byte_count_buf or len(byte_count_buf) < 1:
+                    print("  -> Fail: Connection closed or byte_count missing")
                     results.append((tc.name, "NO_RESPONSE"))
                     continue
                 
-                byte_count = smbus_hdr[2]
+                byte_count = byte_count_buf[0]
                 # remaining bytes: byte_count data bytes + 1 PEC byte
-                remaining = s.recv(byte_count + 1)
-                resp_data = smbus_hdr + remaining
+                remaining = recv_exactly(s, byte_count + 1)
+                resp_data = byte_count_buf + remaining
                 
                 # Parse response
                 # SMBus response header is 7 bytes (dest_addr, cmd, count, src_addr, mctp_hdr[4], msg_type[1])
@@ -141,6 +151,10 @@ def run_tests():
                 print(f"  -> Status: {status_str}, Resp Payload size: {len(resp_data)-20} bytes")
                 results.append((tc.name, status_str))
                 
+        except (socket.timeout, TimeoutError):
+            status_str = "TIMEOUT (Expected on SLD)" if tc.opcode == 0x5400 else "TIMEOUT"
+            print(f"  -> {status_str}")
+            results.append((tc.name, status_str))
         except Exception as e:
             print(f"  -> Fail: {e}")
             results.append((tc.name, f"EXCEPTION: {type(e).__name__}"))

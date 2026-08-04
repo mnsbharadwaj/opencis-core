@@ -361,8 +361,13 @@ class FmSmbusMctpServer(RunnableComponent):
             ))
             return (CCI_RETURN_CODE.UNSUPPORTED, b"", False)
 
+        # For Get LD Info (opcode 0x5400), set port_index = 1 by default since request payload is empty
+        port_index = 0
+        if opcode == 0x5400:
+            port_index = 1
+
         try:
-            return await self._mctp_client.send_raw_cci(opcode, payload)
+            return await self._mctp_client.send_raw_cci(opcode, payload, port_index=port_index)
         except Exception as exc:
             logger.error(self._create_message(
                 f"FM CLI path error for opcode 0x{opcode:04X}: {exc}"
